@@ -557,7 +557,6 @@ export default function Dashboard({ section, onBack, theme, onToggleTheme, pendi
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, selectedTask, modal, detailId, loadT]);
 
   const ctxAct = async (a) => {

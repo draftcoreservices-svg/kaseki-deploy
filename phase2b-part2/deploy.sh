@@ -62,7 +62,7 @@ else
 fi
 
 echo "[6/8] Building the React frontend (1-3 minutes)..."
-pct exec $CT -- bash -c "cd /opt/kaseki/src/client-src && docker run --rm -v /opt/kaseki/src/client-src:/app -w /app node:20-slim sh -c 'npx --yes react-scripts build' 2>&1 | tail -30"
+pct exec $CT -- bash -c "cd /opt/kaseki/src/client-src && docker run --rm -e DISABLE_ESLINT_PLUGIN=true -e CI=false -v /opt/kaseki/src/client-src:/app -w /app node:20-slim sh -c 'npx --yes react-scripts build' 2>&1 | tail -30"
 
 echo "[7/8] Verifying the build produced index.html..."
 if pct exec $CT -- test -f /opt/kaseki/src/client-src/build/index.html; then

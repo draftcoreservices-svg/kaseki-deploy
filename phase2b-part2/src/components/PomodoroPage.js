@@ -63,7 +63,6 @@ export default function PomodoroPage({ onBack, theme, onToggleTheme, initialTask
     });
 
     refreshHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshHistory = () => {
@@ -74,7 +73,6 @@ export default function PomodoroPage({ onBack, theme, onToggleTheme, initialTask
   // When mode changes while not running, reset the clock to that mode's duration
   useEffect(() => {
     if (!running) setSecondsLeft(durationFor(mode));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, prefs]);
 
   // Tick
@@ -96,7 +94,6 @@ export default function PomodoroPage({ onBack, theme, onToggleTheme, initialTask
       });
     }, 1000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
   // Update document title with countdown
