@@ -402,7 +402,7 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
 // Dashboard — the main view for a single space
 // ═══════════════════════════════════════════════════════════════════════════
 
-export default function Dashboard({ space, onBack, theme, onToggleTheme, pendingOpenTask, onPendingHandled, onOpenPomodoro }) {
+export default function Dashboard({ space, onBack, theme, onToggleTheme, pendingOpenTask, onPendingHandled, onOpenPomodoro, onOpenHelp }) {
   const toast = useToast();
   const [tasks, setTasks] = useState([]);
   const [todos, setTodos] = useState([]);
@@ -623,16 +623,31 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
       });
     } catch (e) { toast.show({ message: e.message, type: 'error' }); }
   };
+  const delTd = async (t) => {
+    if (!window.confirm(`Permanently delete todo "${t.title}"?\n\nThis cannot be undone after 10 seconds.`)) return;
+    try {
+      await api.softDeleteTodo(t.id);
+      loadTd();
+      toast.show({
+        message: `Todo deleted: ${t.title}`,
+        type: 'undo',
+        undo: async () => {
+          try { await api.undoDeleteTodo(t.id); loadTd(); }
+          catch (e) { toast.show({ message: e.message || 'Undo expired', type: 'error' }); }
+        },
+      });
+    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+  };
   const delEv = async (ev) => {
     try {
-      await api.deleteEvent(ev.id);
+      await api.softDeleteEvent(ev.id);
       loadEv();
       toast.show({
         message: `Event deleted: ${ev.title}`,
         type: 'undo',
         undo: async () => {
-          try { await api.createEvent({ space_id: space.id, title: ev.title, description: ev.description, date: ev.date, time: ev.time }); loadEv(); }
-          catch (e) { toast.show({ message: e.message, type: 'error' }); }
+          try { await api.undoDeleteEvent(ev.id); loadEv(); }
+          catch (e) { toast.show({ message: e.message || 'Undo expired', type: 'error' }); }
         },
       });
     } catch (er) { toast.show({ message: er.message, type: 'error' }); }
@@ -813,6 +828,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
               <div className="dash-menu">
                 <button onClick={() => { setMenuOpen(false); setTemplateMgrOpen(true); }}><span className="dash-menu-icon">📋</span> Templates</button>
                 <button onClick={() => { setMenuOpen(false); onOpenPomodoro && onOpenPomodoro(); }}><span className="dash-menu-icon">🍅</span> Pomodoro</button>
+                <button onClick={() => { setMenuOpen(false); onOpenHelp && onOpenHelp(); }}><span className="dash-menu-icon">⌨️</span> Shortcuts</button>
                 <button onClick={doExport}><span className="dash-menu-icon">⬇</span> Export CSV</button>
                 <button onClick={doImport}><span className="dash-menu-icon">⬆</span> Import CSV</button>
               </div>
@@ -874,7 +890,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
           <div className="dash-main">
             <Timeline space={space} tasks={tasks} events={events} selectedDate={selDate} onSelectDate={setSelDate}/>
             <div className="dash-panels">
-              <div className="dash-panel"><div className="dash-panel-header"><span className="dash-panel-title">Todos · {fmtDate(selDate)}</span><button className="dash-panel-add" onClick={()=>setModal('todo')}>+</button></div><div className="dash-panel-body">{todos.map(t=><div key={t.id} className={`dash-todo-item${t.completed?' dash-todo-item--done':''}`}><div className="dash-todo-check" onClick={()=>toggleTd(t)}>{t.completed?'✓':''}</div><span className="dash-todo-text">{t.title}</span>{t.is_recurring?<span className="dash-todo-recurring">🔁</span>:null}<button className="dash-todo-dismiss" onClick={()=>dismissTd(t)}>✕</button></div>)}{todos.length===0&&<div className="dash-empty-small">No todos for this date</div>}</div></div>
+              <div className="dash-panel"><div className="dash-panel-header"><span className="dash-panel-title">Todos · {fmtDate(selDate)}</span><button className="dash-panel-add" onClick={()=>setModal('todo')}>+</button></div><div className="dash-panel-body">{todos.map(t=><div key={t.id} className={`dash-todo-item${t.completed?' dash-todo-item--done':''}`} onContextMenu={(e)=>{e.preventDefault();delTd(t);}} title="Right-click to delete permanently"><div className="dash-todo-check" onClick={()=>toggleTd(t)}>{t.completed?'✓':''}</div><span className="dash-todo-text">{t.title}</span>{t.is_recurring?<span className="dash-todo-recurring">🔁</span>:null}<button className="dash-todo-dismiss" onClick={()=>dismissTd(t)} title="Dismiss">✕</button></div>)}{todos.length===0&&<div className="dash-empty-small">No todos for this date</div>}</div></div>
               <div className="dash-panel"><div className="dash-panel-header"><span className="dash-panel-title">Events</span><button className="dash-panel-add" onClick={()=>setModal('event')}>+</button></div><div className="dash-panel-body">{events.map(ev=><div key={ev.id} className="dash-event-item"><div className="dash-event-date"><span className="dash-event-day">{new Date(ev.date).getDate()}</span><span className="dash-event-month">{new Date(ev.date).toLocaleDateString('en-GB',{month:'short'})}</span></div><div className="dash-event-info"><span className="dash-event-title">{ev.title}</span>{ev.time&&<span className="dash-event-time">{ev.time}</span>}</div><button className="dash-event-delete" onClick={()=>delEv(ev)}>✕</button></div>)}{events.length===0&&<div className="dash-empty-small">No events</div>}</div></div>
               <div className="dash-panel"><div className="dash-panel-header"><span className="dash-panel-title">Notes</span></div><div className="dash-panel-body dash-panel-body--notes"><textarea className="dash-notes-textarea" value={sNotes} onChange={e=>saveN(e.target.value)} placeholder="Type your notes here..."/></div></div>
             </div>

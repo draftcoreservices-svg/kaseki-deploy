@@ -193,6 +193,7 @@ export default function App() {
           pendingOpenTask={pendingOpenTask}
           onPendingHandled={() => setPendingOpenTask(null)}
           onOpenPomodoro={openPomodoro}
+          onOpenHelp={() => setHelpOpen(true)}
         />
       )}
       {view === 'landing' && (
