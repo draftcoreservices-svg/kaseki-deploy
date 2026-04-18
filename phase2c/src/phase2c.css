@@ -673,7 +673,6 @@
 .landing-p2c-card-sub {
   font-size: 13px;
   color: var(--text-secondary, #9ca3af);
-  text-transform: capitalize;
 }
 .landing-p2c-card-arrow {
   color: var(--card-accent, #3b9eff);

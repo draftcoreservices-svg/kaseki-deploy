@@ -9,6 +9,52 @@ const { PRESETS, ICON_SET, COLOR_SET, getPreset } = require('./onboarding-preset
 const router = express.Router();
 
 // ───────────────────────────────────────────────────────────────────────────
+// Soft-delete support
+// Tasks/todos/events/tags carry a deleted_at timestamp. Setting it hides the
+// row from API responses immediately (so the user's UI updates). If not
+// undone within the 10-second window, purgeExpiredDeletions() hard-deletes
+// the row — cascades fire then (subtasks, files, task_notes, etc.).
+// ───────────────────────────────────────────────────────────────────────────
+const UNDO_WINDOW_SECONDS = 10;
+let lastPurgeAt = 0;
+
+function purgeExpiredDeletions() {
+  // Rate-limit: don't run more than once every 2 seconds across the whole
+  // process. The worst case delay between soft and hard delete is
+  // UNDO_WINDOW_SECONDS + 2, which is fine.
+  const now = Date.now();
+  if (now - lastPurgeAt < 2000) return;
+  lastPurgeAt = now;
+  const db = getDb();
+  const cutoff = `datetime('now', '-${UNDO_WINDOW_SECONDS} seconds')`;
+  try {
+    db.exec(`
+      DELETE FROM tasks  WHERE deleted_at IS NOT NULL AND deleted_at <= ${cutoff};
+      DELETE FROM todos  WHERE deleted_at IS NOT NULL AND deleted_at <= ${cutoff};
+      DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at <= ${cutoff};
+      DELETE FROM tags   WHERE deleted_at IS NOT NULL AND deleted_at <= ${cutoff};
+    `);
+  } catch (e) {
+    console.error('[purge] failed:', e.message);
+  }
+}
+
+// Filter an array of rows, removing any with deleted_at set. Used at the
+// response layer so we don't have to patch every SQL query with
+// `AND deleted_at IS NULL`. Applied to list endpoints.
+function filterDeleted(rows) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.filter(r => !r || r.deleted_at == null);
+}
+
+// Middleware: purge expired soft-deletes at the start of every authenticated
+// request. Cheap when rate-limited, catches everything within ~12s.
+router.use((req, res, next) => {
+  purgeExpiredDeletions();
+  next();
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 // File upload config
 // ───────────────────────────────────────────────────────────────────────────
 const storage = multer.diskStorage({
@@ -302,7 +348,7 @@ router.get('/tasks', authenticate, (req, res) => {
   if (!space) return;
   const db = getDb();
   const tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND space_id = ? AND archived = 0 ORDER BY pinned DESC, sort_order ASC, updated_at DESC').all(req.user.id, space.id);
-  res.json({ tasks: attachTagsToTasks(tasks) });
+  res.json({ tasks: attachTagsToTasks(filterDeleted(tasks)) });
 });
 
 router.get('/tasks/archived/list', authenticate, (req, res) => {
@@ -310,7 +356,7 @@ router.get('/tasks/archived/list', authenticate, (req, res) => {
   if (!space) return;
   const db = getDb();
   const tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND space_id = ? AND archived = 1 ORDER BY updated_at DESC').all(req.user.id, space.id);
-  res.json({ tasks: attachTagsToTasks(tasks) });
+  res.json({ tasks: attachTagsToTasks(filterDeleted(tasks)) });
 });
 
 // Weekly review is cross-space by default. Optional ?space_id= narrows it.
@@ -332,13 +378,13 @@ router.get('/tasks/weekly/review', authenticate, (req, res) => {
   }
 
   const db = getDb();
-  const completedThisWeek = db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND status = 'done' AND updated_at >= ?${spaceFilter} ORDER BY updated_at DESC`).all(...bind, weekAgoStr);
-  const overdue = db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date IS NOT NULL AND due_date < ?${spaceFilter} ORDER BY due_date ASC`).all(...bind, todayStr);
-  const upcoming = db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date IS NOT NULL AND due_date >= ? AND due_date <= ?${spaceFilter} ORDER BY due_date ASC`).all(...bind, todayStr, weekAheadStr);
+  const completedThisWeek = filterDeleted(db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND status = 'done' AND updated_at >= ?${spaceFilter} ORDER BY updated_at DESC`).all(...bind, weekAgoStr));
+  const overdue = filterDeleted(db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date IS NOT NULL AND due_date < ?${spaceFilter} ORDER BY due_date ASC`).all(...bind, todayStr));
+  const upcoming = filterDeleted(db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date IS NOT NULL AND due_date >= ? AND due_date <= ?${spaceFilter} ORDER BY due_date ASC`).all(...bind, todayStr, weekAheadStr));
 
   // Todos for the review use the same scope.
-  const todosCompleted = db.prepare(`SELECT * FROM todos WHERE user_id = ? AND completed = 1 AND date >= ?${spaceFilter}`).all(...bind, weekAgoStr);
-  const todosTotal = db.prepare(`SELECT * FROM todos WHERE user_id = ? AND date >= ?${spaceFilter}`).all(...bind, weekAgoStr);
+  const todosCompleted = filterDeleted(db.prepare(`SELECT * FROM todos WHERE user_id = ? AND completed = 1 AND date >= ?${spaceFilter}`).all(...bind, weekAgoStr));
+  const todosTotal = filterDeleted(db.prepare(`SELECT * FROM todos WHERE user_id = ? AND date >= ?${spaceFilter}`).all(...bind, weekAgoStr));
 
   res.json({
     completedThisWeek,
@@ -436,6 +482,96 @@ router.put('/tasks/:id/unarchive', authenticate, (req, res) => {
   logActivity(id, req.user.id, 'unarchived', 'Restored from archive');
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
   res.json({ task });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOFT DELETE + UNDO
+// Feature A1 — task/todo/event/tag soft delete with 10-second undo window.
+// Rows are marked with deleted_at; purgeExpiredDeletions() hard-deletes
+// after UNDO_WINDOW_SECONDS.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// TASK: soft delete (only allowed on archived tasks — belt and braces)
+router.delete('/tasks/:id/soft', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Task not found' });
+  if (!ex.archived) return res.status(400).json({ error: 'Archive the task before deleting it' });
+  db.prepare('UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  logActivity(id, req.user.id, 'deleted', `Soft-deleted: ${ex.title}`);
+  res.json({ id, deleted: true, undo_window_seconds: UNDO_WINDOW_SECONDS });
+});
+
+router.post('/tasks/:id/undo-delete', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Nothing to undo (already purged or not deleted)' });
+  db.prepare('UPDATE tasks SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  logActivity(id, req.user.id, 'undeleted', `Undid delete: ${ex.title}`);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  res.json({ task });
+});
+
+// TODO: soft delete (todos don't have archive; direct delete)
+router.delete('/todos/:id/soft', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM todos WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Todo not found' });
+  db.prepare('UPDATE todos SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  res.json({ id, deleted: true, undo_window_seconds: UNDO_WINDOW_SECONDS });
+});
+
+router.post('/todos/:id/undo-delete', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM todos WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Nothing to undo' });
+  db.prepare('UPDATE todos SET deleted_at = NULL WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  const todo = db.prepare('SELECT * FROM todos WHERE id = ?').get(id);
+  res.json({ todo });
+});
+
+// EVENT: soft delete
+router.delete('/events/:id/soft', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Event not found' });
+  db.prepare('UPDATE events SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  res.json({ id, deleted: true, undo_window_seconds: UNDO_WINDOW_SECONDS });
+});
+
+router.post('/events/:id/undo-delete', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Nothing to undo' });
+  db.prepare('UPDATE events SET deleted_at = NULL WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(id);
+  res.json({ event });
+});
+
+// TAG: soft delete
+router.delete('/tags/:id/soft', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM tags WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Tag not found' });
+  db.prepare('UPDATE tags SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  res.json({ id, deleted: true, undo_window_seconds: UNDO_WINDOW_SECONDS });
+});
+
+router.post('/tags/:id/undo-delete', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM tags WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Nothing to undo' });
+  db.prepare('UPDATE tags SET deleted_at = NULL WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  const tag = db.prepare('SELECT * FROM tags WHERE id = ?').get(id);
+  res.json({ tag });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -586,7 +722,10 @@ router.get('/activity/recent', authenticate, (req, res) => {
       FROM activity_log a
       JOIN tasks t ON a.task_id = t.id
       LEFT JOIN spaces s ON t.space_id = s.id
-      WHERE a.user_id = ? AND t.space_id = ?
+      WHERE a.user_id = ?
+        AND t.space_id = ?
+        AND t.deleted_at IS NULL
+        AND (s.archived IS NULL OR s.archived = 0)
       ORDER BY a.created_at DESC
       LIMIT ?
     `).all(req.user.id, space.id, limit);
@@ -598,6 +737,8 @@ router.get('/activity/recent', authenticate, (req, res) => {
       JOIN tasks t ON a.task_id = t.id
       LEFT JOIN spaces s ON t.space_id = s.id
       WHERE a.user_id = ?
+        AND t.deleted_at IS NULL
+        AND (s.archived IS NULL OR s.archived = 0)
       ORDER BY a.created_at DESC
       LIMIT ?
     `).all(req.user.id, limit);
@@ -616,7 +757,7 @@ router.get('/todos', authenticate, (req, res) => {
   if (!space) return;
   const db = getDb();
   const todos = db.prepare('SELECT * FROM todos WHERE user_id = ? AND space_id = ? AND dismissed = 0 AND (date = ? OR (date <= ? AND completed = 0)) ORDER BY created_at ASC').all(req.user.id, space.id, date, date);
-  res.json({ todos });
+  res.json({ todos: filterDeleted(todos) });
 });
 
 router.post('/todos', authenticate, (req, res) => {
@@ -667,7 +808,7 @@ router.get('/events', authenticate, (req, res) => {
   if (!space) return;
   const db = getDb();
   const events = db.prepare('SELECT * FROM events WHERE user_id = ? AND space_id = ? ORDER BY date ASC, time ASC').all(req.user.id, space.id);
-  res.json({ events });
+  res.json({ events: filterDeleted(events) });
 });
 
 router.post('/events', authenticate, (req, res) => {
@@ -788,7 +929,7 @@ router.get('/tags', authenticate, (req, res) => {
   if (!space) return;
   const db = getDb();
   const tags = db.prepare('SELECT * FROM tags WHERE user_id = ? AND space_id = ? ORDER BY name ASC').all(req.user.id, space.id);
-  res.json({ tags });
+  res.json({ tags: filterDeleted(tags) });
 });
 
 router.post('/tags', authenticate, (req, res) => {
@@ -970,26 +1111,39 @@ router.get('/search', authenticate, (req, res) => {
   }
 
   const tasks = db.prepare(`
-    SELECT id, space_id, title, description, status, priority, due_date, archived, pinned, updated_at
-    FROM tasks
-    WHERE user_id = ? AND (LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(goals) LIKE ?)${spaceFilter}
-    ORDER BY archived ASC, pinned DESC, updated_at DESC
+    SELECT t.id, t.space_id, t.title, t.description, t.status, t.priority, t.due_date, t.archived, t.pinned, t.updated_at
+    FROM tasks t
+    LEFT JOIN spaces s ON t.space_id = s.id
+    WHERE t.user_id = ?
+      AND t.deleted_at IS NULL
+      AND (s.archived IS NULL OR s.archived = 0)
+      AND (LOWER(t.title) LIKE ? OR LOWER(t.description) LIKE ? OR LOWER(t.goals) LIKE ?)${spaceFilter.replace('space_id', 't.space_id')}
+    ORDER BY t.archived ASC, t.pinned DESC, t.updated_at DESC
     LIMIT ?
   `).all(req.user.id, likeQ, likeQ, likeQ, ...spaceBind, limit);
 
   const todos = db.prepare(`
-    SELECT id, space_id, title, completed, date, dismissed
-    FROM todos
-    WHERE user_id = ? AND LOWER(title) LIKE ? AND dismissed = 0${spaceFilter}
-    ORDER BY date DESC
+    SELECT t.id, t.space_id, t.title, t.completed, t.date, t.dismissed
+    FROM todos t
+    LEFT JOIN spaces s ON t.space_id = s.id
+    WHERE t.user_id = ?
+      AND t.deleted_at IS NULL
+      AND (s.archived IS NULL OR s.archived = 0)
+      AND LOWER(t.title) LIKE ?
+      AND t.dismissed = 0${spaceFilter.replace('space_id', 't.space_id')}
+    ORDER BY t.date DESC
     LIMIT ?
   `).all(req.user.id, likeQ, ...spaceBind, limit);
 
   const events = db.prepare(`
-    SELECT id, space_id, title, description, date, time
-    FROM events
-    WHERE user_id = ? AND (LOWER(title) LIKE ? OR LOWER(description) LIKE ?)${spaceFilter}
-    ORDER BY date DESC
+    SELECT e.id, e.space_id, e.title, e.description, e.date, e.time
+    FROM events e
+    LEFT JOIN spaces s ON e.space_id = s.id
+    WHERE e.user_id = ?
+      AND e.deleted_at IS NULL
+      AND (s.archived IS NULL OR s.archived = 0)
+      AND (LOWER(e.title) LIKE ? OR LOWER(e.description) LIKE ?)${spaceFilter.replace('space_id', 'e.space_id')}
+    ORDER BY e.date DESC
     LIMIT ?
   `).all(req.user.id, likeQ, likeQ, ...spaceBind, limit);
 
@@ -1267,21 +1421,24 @@ router.get('/today-summary', authenticate, (req, res) => {
     LEFT JOIN spaces s ON e.space_id = s.id
   `;
 
-  const todos = db.prepare(`${todoJoin} WHERE t.user_id = ? AND t.date = ? AND t.dismissed = 0`).all(req.user.id, today);
-  const events = db.prepare(`${eventJoin} WHERE e.user_id = ? AND e.date = ? ORDER BY e.time ASC`).all(req.user.id, today);
-  const tasks_due_today = db.prepare(`${taskJoin} WHERE t.user_id = ? AND t.archived = 0 AND t.status != 'done' AND t.due_date = ? ORDER BY t.priority DESC`).all(req.user.id, today);
-  const overdue = db.prepare(`${taskJoin} WHERE t.user_id = ? AND t.archived = 0 AND t.status != 'done' AND t.due_date IS NOT NULL AND t.due_date < ? ORDER BY t.due_date ASC`).all(req.user.id, today);
+  // Exclude tasks/todos/events from archived spaces (Feature 5).
+  const archivedSpaceFilter = ' AND (s.archived IS NULL OR s.archived = 0)';
+  const todos = filterDeleted(db.prepare(`${todoJoin} WHERE t.user_id = ? AND t.date = ? AND t.dismissed = 0${archivedSpaceFilter}`).all(req.user.id, today));
+  const events = filterDeleted(db.prepare(`${eventJoin} WHERE e.user_id = ? AND e.date = ?${archivedSpaceFilter.replace('t.', 'e.')} ORDER BY e.time ASC`).all(req.user.id, today));
+  const tasks_due_today = filterDeleted(db.prepare(`${taskJoin} WHERE t.user_id = ? AND t.archived = 0 AND t.status != 'done' AND t.due_date = ?${archivedSpaceFilter} ORDER BY t.priority DESC`).all(req.user.id, today));
+  const overdue = filterDeleted(db.prepare(`${taskJoin} WHERE t.user_id = ? AND t.archived = 0 AND t.status != 'done' AND t.due_date IS NOT NULL AND t.due_date < ?${archivedSpaceFilter} ORDER BY t.due_date ASC`).all(req.user.id, today));
 
   // Yesterday's completed tasks — anything whose status flipped to 'done'
   // yesterday. We approximate via updated_at date match since we don't store
   // a separate completion timestamp.
-  const yesterday_completed = db.prepare(`
+  const yesterday_completed = filterDeleted(db.prepare(`
     ${taskJoin}
     WHERE t.user_id = ?
       AND t.status = 'done'
       AND DATE(t.updated_at) = ?
+      ${archivedSpaceFilter}
     ORDER BY t.updated_at DESC
-  `).all(req.user.id, yesterday);
+  `).all(req.user.id, yesterday));
 
   // Pomodoro stats for today.
   const focusRows = db.prepare(`
@@ -1323,9 +1480,9 @@ router.get('/calendar', authenticate, (req, res) => {
     bind.push(space.id);
   }
 
-  const events = db.prepare(`SELECT * FROM events WHERE user_id = ? AND date >= ? AND date <= ?${spaceFilter} ORDER BY date ASC, time ASC`).all(...bind);
-  const tasks = db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND due_date >= ? AND due_date <= ?${spaceFilter} AND archived = 0 ORDER BY due_date ASC`).all(...bind);
-  const todos = db.prepare(`SELECT * FROM todos WHERE user_id = ? AND date >= ? AND date <= ?${spaceFilter} AND dismissed = 0 ORDER BY date ASC`).all(...bind);
+  const events = filterDeleted(db.prepare(`SELECT * FROM events WHERE user_id = ? AND date >= ? AND date <= ?${spaceFilter} ORDER BY date ASC, time ASC`).all(...bind));
+  const tasks = filterDeleted(db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND due_date >= ? AND due_date <= ?${spaceFilter} AND archived = 0 ORDER BY due_date ASC`).all(...bind));
+  const todos = filterDeleted(db.prepare(`SELECT * FROM todos WHERE user_id = ? AND date >= ? AND date <= ?${spaceFilter} AND dismissed = 0 ORDER BY date ASC`).all(...bind));
 
   res.json({ events, tasks, todos });
 });

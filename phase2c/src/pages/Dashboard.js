@@ -588,6 +588,21 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
       }
       if (a === 'unarchive') { await api.unarchiveTask(t.id); toast.show({ message: `Restored: ${t.title}`, type: 'success' }); }
       if (a === 'done') await api.updateTask(t.id, { status: 'done' });
+      if (a === 'delete-permanent') {
+        if (!window.confirm(`Permanently delete "${t.title}"?\n\nThis cannot be undone after 10 seconds.`)) {
+          setCtx(null);
+          return;
+        }
+        await api.softDeleteTask(t.id);
+        toast.show({
+          message: `Deleted: ${t.title}`,
+          type: 'undo',
+          undo: async () => {
+            try { await api.undoDeleteTask(t.id); loadT(); toast.show({ message: 'Restored', type: 'success' }); }
+            catch (err) { toast.show({ message: err.message || 'Undo expired', type: 'error' }); }
+          },
+        });
+      }
       loadT();
     } catch (e) { toast.show({ message: e.message, type: 'error' }); }
     setCtx(null);
@@ -894,7 +909,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
           />
         </div>
       )}
-      {ctx&&<div className="dash-context-menu" style={{left:ctx.x,top:ctx.y}}><button onClick={()=>ctxAct('pin')}>{ctx.task.pinned?'📌 Unpin':'📌 Pin'}</button><button onClick={()=>ctxAct('done')}>✅ Mark Done</button><button onClick={()=>{setDetailId(ctx.task.id);setCtx(null);}}>📝 Open Detail</button>{showArch?<button onClick={()=>ctxAct('unarchive')}>📤 Restore</button>:<button className="dash-context-danger" onClick={()=>ctxAct('archive')}>🗂️ Archive</button>}</div>}
+      {ctx&&<div className="dash-context-menu" style={{left:ctx.x,top:ctx.y}}><button onClick={()=>ctxAct('pin')}>{ctx.task.pinned?'📌 Unpin':'📌 Pin'}</button><button onClick={()=>ctxAct('done')}>✅ Mark Done</button><button onClick={()=>{setDetailId(ctx.task.id);setCtx(null);}}>📝 Open Detail</button>{showArch?<><button onClick={()=>ctxAct('unarchive')}>📤 Restore</button><button className="dash-context-danger" onClick={()=>ctxAct('delete-permanent')}>🗑️ Delete permanently</button></>:<button className="dash-context-danger" onClick={()=>ctxAct('archive')}>🗂️ Archive</button>}</div>}
       {modal==='task'&&<CreateTaskModal space={space} onClose={()=>{setModal(null);setPendingTemplate(null);}} onCreated={()=>loadT()} prefillTemplate={pendingTemplate}/>}
       {templatePickerOpen && (
         <div className="dash-modal-overlay" onClick={() => setTemplatePickerOpen(false)}>

@@ -204,6 +204,7 @@ export default function App() {
           onLogout={handleLogout}
           onOpenPomodoro={openPomodoro}
           onOpenSettings={() => setView('settings')}
+          onOpenHelp={() => setHelpOpen(true)}
         />
       )}
 

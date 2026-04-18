@@ -108,10 +108,11 @@ function ActivityFeed() {
   );
 }
 
-export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace, onLogout, onOpenPomodoro, onOpenSettings }) {
+export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace, onLogout, onOpenPomodoro, onOpenSettings, onOpenHelp }) {
   const now = useTime();
   const [spaces, setSpaces] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [presetsByKey, setPresetsByKey] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -119,6 +120,16 @@ export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace,
       .then(d => { if (!cancelled) setSpaces((d.spaces || []).filter(s => !s.hidden)); })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false); });
+    // Load preset metadata so we can show proper preset names on cards
+    // instead of lowercased IDs. Non-critical — silent on failure.
+    api.getOnboardingPresets?.()
+      .then(d => {
+        if (cancelled) return;
+        const map = {};
+        for (const p of (d?.presets || [])) map[p.preset] = p;
+        setPresetsByKey(map);
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
@@ -144,6 +155,14 @@ export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace,
           >
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
+          {onOpenHelp && (
+            <button
+              onClick={onOpenHelp}
+              className="icon-btn"
+              title="Keyboard shortcuts (press ? anywhere)"
+              aria-label="Keyboard shortcuts"
+            >⌨️</button>
+          )}
           {onOpenSettings && (
             <button className="icon-btn" onClick={onOpenSettings} title="Settings">⚙️</button>
           )}
@@ -179,7 +198,7 @@ export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace,
                   </div>
                   <div className="landing-p2c-card-info">
                     <div className="landing-p2c-card-name">{s.name}</div>
-                    {s.preset && <div className="landing-p2c-card-sub">{s.preset} space</div>}
+                    {s.preset && <div className="landing-p2c-card-sub">{presetsByKey[s.preset]?.name || s.preset} space</div>}
                   </div>
                   <div className="landing-p2c-card-arrow">→</div>
                 </button>

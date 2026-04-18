@@ -25,6 +25,7 @@ function initDb() {
   initSpaceScopedTables();     // creates the new shape if not already present
   initDependentTables();       // subtasks, task_notes, task_files, activity_log, task_tags, focus_sessions
   initUserPreferences();       // base table + ensureColumn for new fields
+  initSoftDeleteColumns();     // deleted_at on tasks/todos/events/tags (idempotent)
   initIndexes();
 
   return db;
@@ -392,6 +393,17 @@ function initUserPreferences() {
   ensureColumn('user_preferences', 'last_active_space_id', 'INTEGER');
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Soft-delete columns for Phase A stabilisation
+// Applied idempotently on every boot so pre-existing DBs upgrade cleanly.
+// ───────────────────────────────────────────────────────────────────────────
+function initSoftDeleteColumns() {
+  ensureColumn('tasks', 'deleted_at', 'DATETIME');
+  ensureColumn('todos', 'deleted_at', 'DATETIME');
+  ensureColumn('events', 'deleted_at', 'DATETIME');
+  ensureColumn('tags', 'deleted_at', 'DATETIME');
+}
+
 function ensureColumn(table, column, def) {
   try {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all();
@@ -419,6 +431,10 @@ function initIndexes() {
     CREATE INDEX IF NOT EXISTS idx_templates_user_space ON task_templates(user_id, space_id);
     CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_focus_user ON focus_sessions(user_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_tasks_deleted ON tasks(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_todos_deleted ON todos(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_events_deleted ON events(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_tags_deleted ON tags(deleted_at);
   `);
 }
 
