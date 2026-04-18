@@ -161,6 +161,18 @@ const api = {
   getTodaySummary: () => request('/today-summary'),
   getCalendarRange: (start, end, spaceId) =>
     request(`/calendar?start=${start}&end=${end}${spaceId ? `&space_id=${spaceId}` : ''}`),
+
+  // ── Phase C: task dependencies ──────────────────────────────────────────
+  addDependency: (taskId, dependsOnTaskId) =>
+    request(`/tasks/${taskId}/dependencies`, { method: 'POST', body: { depends_on_task_id: dependsOnTaskId } }),
+  removeDependency: (taskId, depId) =>
+    request(`/tasks/${taskId}/dependencies/${depId}`, { method: 'DELETE' }),
+
+  // ── Phase C: time tracking ──────────────────────────────────────────────
+  startTimer: (taskId) => request(`/tasks/${taskId}/time/start`, { method: 'POST' }),
+  stopTimer: (taskId) => request(`/tasks/${taskId}/time/stop`, { method: 'POST' }),
+  getActiveTimer: () => request('/time/active'),
+  deleteTimeEntry: (id) => request(`/time-entries/${id}`, { method: 'DELETE' }),
 };
 
 export default api;

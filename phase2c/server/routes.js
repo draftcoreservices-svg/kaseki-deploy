@@ -410,7 +410,19 @@ router.get('/tasks', authenticate, (req, res) => {
   if (!space) return;
   const db = getDb();
   const tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND space_id = ? AND archived = 0 ORDER BY pinned DESC, sort_order ASC, updated_at DESC').all(req.user.id, space.id);
-  res.json({ tasks: attachTagsToTasks(filterDeleted(tasks)) });
+  // Phase C — compute blocked set in one query. A task is "blocked" if any
+  // of its dependencies is not done (and is not itself soft-deleted).
+  const blockedRows = db.prepare(`
+    SELECT DISTINCT d.task_id
+    FROM task_dependencies d
+    JOIN tasks t ON t.id = d.depends_on_task_id
+    JOIN tasks self ON self.id = d.task_id
+    WHERE self.user_id = ? AND self.space_id = ?
+      AND t.status != 'done' AND t.deleted_at IS NULL
+  `).all(req.user.id, space.id);
+  const blocked = new Set(blockedRows.map(r => r.task_id));
+  const decorated = attachTagsToTasks(filterDeleted(tasks)).map(t => ({ ...t, blocked: blocked.has(t.id) }));
+  res.json({ tasks: decorated });
 });
 
 router.get('/tasks/archived/list', authenticate, (req, res) => {
@@ -481,7 +493,32 @@ router.get('/tasks/:id', authenticate, (req, res) => {
   const files = db.prepare('SELECT * FROM task_files WHERE task_id = ? ORDER BY created_at DESC').all(task.id);
   const activity = db.prepare('SELECT * FROM activity_log WHERE task_id = ? ORDER BY created_at DESC').all(task.id);
   const tags = getTagsForTask(task.id);
-  res.json({ task: { ...task, tags }, subtasks, notes, files, activity, tags });
+  // Phase C — dependencies this task waits on, plus incoming (who waits on it).
+  const dependencies = db.prepare(`
+    SELECT t.id, t.title, t.status, d.id AS dep_id
+    FROM task_dependencies d
+    JOIN tasks t ON t.id = d.depends_on_task_id
+    WHERE d.task_id = ? AND t.deleted_at IS NULL
+    ORDER BY t.title
+  `).all(task.id);
+  const dependents = db.prepare(`
+    SELECT t.id, t.title, t.status
+    FROM task_dependencies d
+    JOIN tasks t ON t.id = d.task_id
+    WHERE d.depends_on_task_id = ? AND t.deleted_at IS NULL
+    ORDER BY t.title
+  `).all(task.id);
+  // Phase C — time entries for this task. active session has ended_at=NULL.
+  const timeEntries = db.prepare(`
+    SELECT * FROM time_entries WHERE task_id = ? ORDER BY started_at DESC
+  `).all(task.id);
+  const totalSeconds = timeEntries.reduce((acc, e) => acc + (e.duration_seconds || 0), 0);
+  res.json({
+    task: { ...task, tags },
+    subtasks, notes, files, activity, tags,
+    dependencies, dependents,
+    timeEntries, totalSeconds,
+  });
 });
 
 router.post('/tasks', authenticate, (req, res) => {
@@ -506,6 +543,24 @@ router.put('/tasks/:id', authenticate, (req, res) => {
   const db = getDb();
   const ex = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.user.id);
   if (!ex) return res.status(404).json({ error: 'Not found' });
+
+  // Phase C: if this transition sets status=done, verify all dependencies
+  // are done too. Reject with 409 so the client can show a useful toast.
+  if (req.body.status === 'done' && ex.status !== 'done') {
+    const blockers = db.prepare(`
+      SELECT t.id, t.title, t.status
+      FROM task_dependencies d
+      JOIN tasks t ON t.id = d.depends_on_task_id
+      WHERE d.task_id = ? AND t.status != 'done' AND t.deleted_at IS NULL
+    `).all(id);
+    if (blockers.length > 0) {
+      return res.status(409).json({
+        error: 'Cannot complete: waiting on ' + blockers.map(b => b.title).join(', '),
+        code: 'BLOCKED_BY_DEPENDENCIES',
+        blockers,
+      });
+    }
+  }
 
   const fields = ['title', 'description', 'status', 'priority', 'due_date', 'due_time', 'pinned', 'archived', 'sort_order', 'goals', 'space_id'];
   const ups = []; const vals = [];
@@ -1925,5 +1980,178 @@ router.put('/spaces/:id/fields/reorder', authenticate, (req, res) => {
   tx();
   res.json({ success: true });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE C — TASK DEPENDENCIES
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Helper: DFS cycle check. Returns true if adding "task depends on dependsOn"
+// would create a cycle. Assumes the edge is not yet inserted.
+function wouldCreateCycle(db, userId, taskId, dependsOnTaskId) {
+  // If target already transitively depends on source, adding source -> target
+  // closes a cycle. Walk forward from dependsOnTaskId following the graph;
+  // if we reach taskId, it's a cycle.
+  const edges = db.prepare(`
+    SELECT d.task_id, d.depends_on_task_id
+    FROM task_dependencies d
+    JOIN tasks t1 ON t1.id = d.task_id
+    JOIN tasks t2 ON t2.id = d.depends_on_task_id
+    WHERE t1.user_id = ? AND t2.user_id = ?
+  `).all(userId, userId);
+  const graph = new Map();
+  for (const e of edges) {
+    if (!graph.has(e.task_id)) graph.set(e.task_id, []);
+    graph.get(e.task_id).push(e.depends_on_task_id);
+  }
+  // Treat the hypothetical new edge as already present for traversal.
+  if (!graph.has(taskId)) graph.set(taskId, []);
+  graph.get(taskId).push(dependsOnTaskId);
+
+  const seen = new Set();
+  const stack = [dependsOnTaskId];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node === taskId) return true;
+    if (seen.has(node)) continue;
+    seen.add(node);
+    const out = graph.get(node) || [];
+    for (const n of out) stack.push(n);
+  }
+  return false;
+}
+
+router.post('/tasks/:id/dependencies', authenticate, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const { depends_on_task_id } = req.body || {};
+  if (!depends_on_task_id) return res.status(400).json({ error: 'depends_on_task_id required' });
+  const dependsOnId = parseInt(depends_on_task_id);
+  if (dependsOnId === taskId) return res.status(400).json({ error: 'A task cannot depend on itself' });
+
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  const dep = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(dependsOnId, req.user.id);
+  if (!task || !dep) return res.status(404).json({ error: 'Task not found' });
+  if (task.space_id !== dep.space_id) return res.status(400).json({ error: 'Dependencies must be in the same space' });
+  if (task.deleted_at || dep.deleted_at) return res.status(400).json({ error: 'Cannot link deleted tasks' });
+
+  if (wouldCreateCycle(db, req.user.id, taskId, dependsOnId)) {
+    return res.status(400).json({ error: 'Would create a circular dependency', code: 'CIRCULAR_DEPENDENCY' });
+  }
+
+  try {
+    db.prepare('INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?, ?)').run(taskId, dependsOnId);
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE')) return res.status(409).json({ error: 'Dependency already exists' });
+    throw e;
+  }
+  logActivity(taskId, req.user.id, 'dependency_added', 'Now depends on: ' + dep.title);
+  res.json({ success: true });
+});
+
+router.delete('/tasks/:id/dependencies/:depId', authenticate, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const depId = parseInt(req.params.depId);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  // Look up dependency row, scoped to user ownership of the source task.
+  const row = db.prepare(`
+    SELECT d.*, t.title AS dep_title
+    FROM task_dependencies d
+    JOIN tasks t ON t.id = d.depends_on_task_id
+    WHERE d.id = ? AND d.task_id = ?
+  `).get(depId, taskId);
+  if (!row) return res.status(404).json({ error: 'Dependency not found' });
+  db.prepare('DELETE FROM task_dependencies WHERE id = ?').run(depId);
+  logActivity(taskId, req.user.id, 'dependency_removed', 'No longer depends on: ' + row.dep_title);
+  res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE C — TIME TRACKING
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Start a timer on a task. One active timer per user (across all tasks).
+// If the user has an active timer elsewhere, stop it first and include the
+// closed entry in the response so the client can show "previous timer stopped".
+router.post('/tasks/:id/time/start', authenticate, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  let stoppedPrevious = null;
+  const active = db.prepare('SELECT * FROM time_entries WHERE user_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1').get(req.user.id);
+  if (active) {
+    // Close the previous timer.
+    const now = new Date();
+    const started = new Date(active.started_at);
+    const dur = Math.max(0, Math.round((now - started) / 1000));
+    db.prepare('UPDATE time_entries SET ended_at = ?, duration_seconds = ? WHERE id = ?')
+      .run(now.toISOString(), dur, active.id);
+    stoppedPrevious = { id: active.id, task_id: active.task_id, duration_seconds: dur };
+    logActivity(active.task_id, req.user.id, 'time_stopped', 'Timer stopped (switched tasks): ' + formatDuration(dur));
+  }
+
+  const startedAt = new Date().toISOString();
+  const result = db.prepare('INSERT INTO time_entries (task_id, user_id, started_at) VALUES (?, ?, ?)').run(taskId, req.user.id, startedAt);
+  logActivity(taskId, req.user.id, 'time_started', 'Timer started');
+  const entry = db.prepare('SELECT * FROM time_entries WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ entry, stoppedPrevious });
+});
+
+// Stop the active timer (on any task — idempotent: stops whatever is running).
+router.post('/tasks/:id/time/stop', authenticate, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const db = getDb();
+  const entry = db.prepare('SELECT * FROM time_entries WHERE task_id = ? AND user_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1').get(taskId, req.user.id);
+  if (!entry) return res.status(404).json({ error: 'No active timer on this task' });
+  const now = new Date();
+  const started = new Date(entry.started_at);
+  const dur = Math.max(0, Math.round((now - started) / 1000));
+  db.prepare('UPDATE time_entries SET ended_at = ?, duration_seconds = ? WHERE id = ?').run(now.toISOString(), dur, entry.id);
+  logActivity(taskId, req.user.id, 'time_stopped', 'Timer stopped: ' + formatDuration(dur));
+  const updated = db.prepare('SELECT * FROM time_entries WHERE id = ?').get(entry.id);
+  res.json({ entry: updated });
+});
+
+// What's the user's currently-running timer, if any? Used by the client on
+// mount so a recovered session can display the right task highlighted.
+router.get('/time/active', authenticate, (req, res) => {
+  const db = getDb();
+  const entry = db.prepare(`
+    SELECT te.*, t.title AS task_title, t.space_id
+    FROM time_entries te
+    JOIN tasks t ON t.id = te.task_id
+    WHERE te.user_id = ? AND te.ended_at IS NULL
+    ORDER BY te.started_at DESC
+    LIMIT 1
+  `).get(req.user.id);
+  res.json({ entry: entry || null });
+});
+
+// Delete a time entry — useful to prune mistaken sessions.
+router.delete('/time-entries/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const entry = db.prepare(`
+    SELECT te.* FROM time_entries te
+    JOIN tasks t ON t.id = te.task_id
+    WHERE te.id = ? AND t.user_id = ?
+  `).get(id, req.user.id);
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM time_entries WHERE id = ?').run(id);
+  logActivity(entry.task_id, req.user.id, 'time_deleted', 'Time entry deleted');
+  res.json({ success: true });
+});
+
+// Tiny formatter mirror of the client-side one, for activity log strings.
+function formatDuration(seconds) {
+  if (seconds < 60) return seconds + 's';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm';
+}
 
 module.exports = router;

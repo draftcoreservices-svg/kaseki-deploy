@@ -385,6 +385,38 @@ function initDependentTables() {
       FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
       FOREIGN KEY (field_id) REFERENCES custom_field_definitions(id) ON DELETE CASCADE
     );
+
+    -- Phase C: task_dependencies
+    --   task_id depends on depends_on_task_id (i.e. depends_on must complete
+    --   before task_id can move to status=done). Same-space only, enforced at
+    --   insert time via API layer (not DB constraint — cheaper).
+    CREATE TABLE IF NOT EXISTS task_dependencies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      depends_on_task_id INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(task_id, depends_on_task_id),
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (depends_on_task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    );
+
+    -- Phase C: time_entries
+    --   One row per stopwatch session. started_at and ended_at are ISO strings;
+    --   duration_seconds is denormalised at stop time so reporting queries
+    --   don't need to parse datetimes. An active (running) timer has
+    --   ended_at=NULL and duration_seconds=NULL.
+    CREATE TABLE IF NOT EXISTS time_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      started_at DATETIME NOT NULL,
+      ended_at DATETIME,
+      duration_seconds INTEGER,
+      note TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 }
 

@@ -36,6 +36,26 @@ function todayStr() { return new Date().toISOString().split('T')[0]; }
 function isOverdue(d) { return d && d < todayStr(); }
 function fileSize(b) { if (b < 1024) return b + 'B'; if (b < 1048576) return (b/1024).toFixed(1) + 'KB'; return (b/1048576).toFixed(1) + 'MB'; }
 
+// Phase C — duration formatter. 0-59s => "Ns", <1h => "Nm", else "Hh Mm".
+function fmtDuration(seconds) {
+  if (seconds == null || !Number.isFinite(seconds)) return '0s';
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return s + 's';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm';
+}
+// Live HH:MM:SS clock for a running timer.
+function fmtClock(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return pad(h) + ':' + pad(m) + ':' + pad(sec);
+}
+
 // Compact one-line display of a custom field value for the task-list peek.
 function formatPeek(f, v) {
   if (v == null || v === '') return '—';
@@ -329,7 +349,7 @@ function TagPicker({ space, currentTags, availableTags, onAdd, onRemove, onCreat
 // Phase 2C: hardcoded Work-only fields (case_reference, client_name, court_date) dropped.
 // They come back in Deploy 2 as custom fields per space preset.
 
-function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsChanged }) {
+function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsChanged, allTasks }) {
   const toast = useToast();
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('details');
@@ -340,6 +360,13 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
   const [customFields, setCustomFields] = useState([]); // array of field defs with current value
   const [customDraft, setCustomDraft] = useState({});   // { field_id: value } during edit
   const [viewerIdx, setViewerIdx] = useState(null);     // index into files[] when viewer open; null = closed
+  // Phase C — timer state. activeStart is a Date when a timer is running for
+  // THIS task, else null. tick just forces a re-render every second for the
+  // live clock display; no real purpose beyond that.
+  const [activeStart, setActiveStart] = useState(null);
+  const [, setTick] = useState(0);
+  // Phase C — dependency picker selected value (task id, as string).
+  const [depPick, setDepPick] = useState('');
   const fileRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -357,8 +384,61 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
   }, [taskId]);
   useEffect(() => { load(); loadFields(); }, [load, loadFields]);
 
+  // Phase C — restore active timer on mount. If the server reports an active
+  // timer for THIS task, start ticking. If it's on a different task we leave
+  // activeStart null; clicking Start here will stop the other one (per
+  // backend's /time/start logic). LocalStorage is a belt-and-braces cache
+  // so a fresh page load feels instant — the server call is the truth.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = localStorage.getItem('kaseki-active-timer');
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (parsed && parsed.task_id === taskId && parsed.started_at) {
+              setActiveStart(new Date(parsed.started_at));
+            }
+          } catch (_) { localStorage.removeItem('kaseki-active-timer'); }
+        }
+        const r = await api.getActiveTimer();
+        if (cancelled) return;
+        if (r.entry && r.entry.task_id === taskId) {
+          setActiveStart(new Date(r.entry.started_at));
+          localStorage.setItem('kaseki-active-timer', JSON.stringify({
+            task_id: taskId, started_at: r.entry.started_at,
+          }));
+        } else {
+          // No active timer on this task (active could be elsewhere).
+          setActiveStart(null);
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached);
+              if (parsed && parsed.task_id === taskId) localStorage.removeItem('kaseki-active-timer');
+            } catch (_) {}
+          }
+        }
+      } catch (_) {
+        // Server unreachable — leave whatever localStorage said in place.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [taskId]);
+
+  // Phase C — tick once a second while a timer is active on this task.
+  useEffect(() => {
+    if (!activeStart) return;
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [activeStart]);
+
   if (!data) return <div className="dash-detail-overlay" onClick={onClose}><div className="dash-detail" onClick={e => e.stopPropagation()}><div style={{ padding: 40, textAlign: 'center', color: 'var(--text-tertiary)' }}>Loading...</div></div></div>;
   const { task, subtasks, notes, files, activity } = data;
+  const dependencies = data.dependencies || [];
+  const dependents = data.dependents || [];
+  const timeEntries = data.timeEntries || [];
+  const totalSeconds = data.totalSeconds || 0;
   const currentTags = data.tags || task.tags || [];
   const u = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -427,6 +507,61 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
     catch (e) { toast.show({ message: e.message, type: 'error' }); }
   };
 
+  // ── Phase C handlers: dependencies + time tracking ────────────────────
+  const addDep = async () => {
+    if (!depPick) return;
+    try {
+      await api.addDependency(task.id, parseInt(depPick));
+      setDepPick('');
+      load();
+      onUpdated();
+    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+  };
+  const removeDep = async (dep) => {
+    try {
+      await api.removeDependency(task.id, dep.dep_id);
+      load();
+      onUpdated();
+      toast.show({ message: `Removed dependency: ${dep.title}`, type: 'info' });
+    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+  };
+  const startTimer = async () => {
+    try {
+      const r = await api.startTimer(task.id);
+      setActiveStart(new Date(r.entry.started_at));
+      localStorage.setItem('kaseki-active-timer', JSON.stringify({
+        task_id: task.id, started_at: r.entry.started_at,
+      }));
+      if (r.stoppedPrevious) {
+        toast.show({ message: `Previous timer stopped (${fmtDuration(r.stoppedPrevious.duration_seconds)})`, type: 'info' });
+      } else {
+        toast.show({ message: 'Timer started', type: 'success' });
+      }
+      load();
+    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+  };
+  const stopTimer = async () => {
+    try {
+      const r = await api.stopTimer(task.id);
+      setActiveStart(null);
+      localStorage.removeItem('kaseki-active-timer');
+      toast.show({ message: `Timer stopped: ${fmtDuration(r.entry.duration_seconds)}`, type: 'success' });
+      load();
+    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+  };
+  const delTimeEntry = async (entry) => {
+    try {
+      await api.deleteTimeEntry(entry.id);
+      // If the user deleted the active entry, clear local state.
+      if (entry.ended_at == null) {
+        setActiveStart(null);
+        localStorage.removeItem('kaseki-active-timer');
+      }
+      load();
+      toast.show({ message: 'Time entry deleted', type: 'info' });
+    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+  };
+
   const addTag = async (tag) => {
     try { await api.addTaskTag(task.id, tag.id); load(); onUpdated(); }
     catch (e) { toast.show({ message: e.message, type: 'error' }); }
@@ -454,7 +589,11 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
         {editing ? <input className="dash-detail-title-input" value={form.title} onChange={e => u('title', e.target.value)} /> : <h2>{task.title}</h2>}
         <div className="dash-detail-actions">{editing ? <button className="dash-detail-save" onClick={save}>Save</button> : <button className="dash-detail-edit" onClick={() => setEditing(true)}>Edit</button>}<button className="dash-detail-close" onClick={onClose}>✕</button></div>
       </div>
-      <div className="dash-detail-tabs">{['details','subtasks','notes','files','activity'].map(t => <button key={t} className={`dash-detail-tab${tab===t?' dash-detail-tab--active':''}`} onClick={()=>setTab(t)}>{t.charAt(0).toUpperCase()+t.slice(1)}{t==='subtasks'?` (${subtasks.length})`:t==='files'?` (${files.length})`:''}</button>)}</div>
+      <div className="dash-detail-tabs">{['details','subtasks','notes','files','depends','time','activity'].map(t => {
+        const count = t==='subtasks'?subtasks.length:t==='files'?files.length:t==='depends'?(dependencies?.length || 0):t==='time'?(timeEntries?.length || 0):null;
+        const label = t==='depends' ? 'Depends' : t.charAt(0).toUpperCase()+t.slice(1);
+        return <button key={t} className={`dash-detail-tab${tab===t?' dash-detail-tab--active':''}`} onClick={()=>setTab(t)}>{label}{count!=null?` (${count})`:''}</button>;
+      })}</div>
       <div className="dash-detail-body">
         {tab==='details'&&<>
           <div className="dash-detail-meta">
@@ -545,6 +684,98 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
               );
             })}
             {files.length===0&&<div className="dash-empty-small">No files attached</div>}
+          </div>
+        </>}
+        {tab==='depends'&&<>
+          {/* Phase C — Dependencies: tasks this one waits on */}
+          <div className="dash-detail-section">
+            <h3>This task depends on</h3>
+            {dependencies.length === 0 && <div className="dash-empty-small">No dependencies. This task can be completed anytime.</div>}
+            {dependencies.length > 0 && (
+              <div className="dash-dep-list">
+                {dependencies.map(d => (
+                  <div key={d.dep_id} className={`dash-dep-item${d.status !== 'done' ? ' dash-dep-item--blocking' : ''}`}>
+                    <span className="dash-dep-status-dot" style={{ background: STATUS_COLORS[d.status] }} />
+                    <span className="dash-dep-title">{d.title}</span>
+                    <span className="dash-dep-status">{STATUS_LABELS[d.status]}</span>
+                    <button className="dash-dep-remove" onClick={() => removeDep(d)} title="Remove dependency">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {(() => {
+              // Picker options: other active tasks in the same space, not already a dep.
+              const excludedIds = new Set([task.id, ...dependencies.map(d => d.id)]);
+              const candidates = (allTasks || []).filter(t => !excludedIds.has(t.id) && !t.archived);
+              if (candidates.length === 0) return null;
+              return (
+                <div className="dash-dep-add">
+                  <select value={depPick} onChange={e => setDepPick(e.target.value)}>
+                    <option value="">Add dependency…</option>
+                    {candidates.map(c => (
+                      <option key={c.id} value={c.id}>{c.title} {c.status === 'done' ? '(done)' : ''}</option>
+                    ))}
+                  </select>
+                  <button className="dash-subtask-add-btn" disabled={!depPick} onClick={addDep}>Add</button>
+                </div>
+              );
+            })()}
+          </div>
+          {dependents.length > 0 && (
+            <div className="dash-detail-section">
+              <h3>Tasks waiting on this one</h3>
+              <div className="dash-dep-list">
+                {dependents.map(d => (
+                  <div key={d.id} className="dash-dep-item dash-dep-item--incoming">
+                    <span className="dash-dep-status-dot" style={{ background: STATUS_COLORS[d.status] }} />
+                    <span className="dash-dep-title">{d.title}</span>
+                    <span className="dash-dep-status">{STATUS_LABELS[d.status]}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>}
+        {tab==='time'&&<>
+          {/* Phase C — Time tracking: stopwatch + session history */}
+          <div className="dash-detail-section">
+            <div className="dash-timer-main">
+              {activeStart ? (
+                <>
+                  <div className="dash-timer-clock dash-timer-clock--running">
+                    {fmtClock((Date.now() - activeStart.getTime()) / 1000)}
+                  </div>
+                  <button className="dash-timer-btn dash-timer-btn--stop" onClick={stopTimer}>⏸ Stop Timer</button>
+                </>
+              ) : (
+                <>
+                  <div className="dash-timer-clock">{fmtDuration(totalSeconds)}</div>
+                  <button className="dash-timer-btn dash-timer-btn--start" onClick={startTimer}>▶ Start Timer</button>
+                </>
+              )}
+              <div className="dash-timer-total">Total logged: <strong>{fmtDuration(totalSeconds)}</strong></div>
+            </div>
+          </div>
+          <div className="dash-detail-section">
+            <h3>Sessions</h3>
+            {timeEntries.length === 0 && <div className="dash-empty-small">No sessions logged yet.</div>}
+            {timeEntries.length > 0 && (
+              <div className="dash-timer-list">
+                {timeEntries.map(e => (
+                  <div key={e.id} className={`dash-timer-entry${e.ended_at == null ? ' dash-timer-entry--active' : ''}`}>
+                    <div className="dash-timer-entry-main">
+                      <span className="dash-timer-entry-date">{fmtDateTime(e.started_at)}</span>
+                      <span className="dash-timer-entry-dur">
+                        {e.ended_at == null
+                          ? <em>running…</em>
+                          : fmtDuration(e.duration_seconds)}
+                      </span>
+                    </div>
+                    <button className="dash-timer-entry-del" onClick={() => delTimeEntry(e)} title="Delete entry">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </>}
         {tab==='activity'&&<div className="dash-activity-list">{activity.map(a=><div key={a.id} className="dash-activity-item"><div className="dash-activity-dot"/><div className="dash-activity-content"><span className="dash-activity-text">{a.details}</span><span className="dash-activity-time">{fmtDateTime(a.created_at)}</span></div></div>)}{activity.length===0&&<div className="dash-empty-small">No activity yet</div>}</div>}
@@ -986,6 +1217,9 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
       </div>
       <div className="dash-task-item-meta">
         <span className="dash-status-badge" style={{ background: STATUS_COLORS[t.status] + '22', color: STATUS_COLORS[t.status] }}>{STATUS_LABELS[t.status]}</span>
+        {t.blocked && t.status !== 'done' && (
+          <span className="dash-blocked-badge" title="Waiting on dependencies">⛔ Blocked</span>
+        )}
         {t.due_date && <span className={`dash-due-date${isOverdue(t.due_date) && t.status !== 'done' ? ' dash-due-date--overdue' : ''}`}>{fmtDate(t.due_date)}</span>}
       </div>
       {(t.tags && t.tags.length > 0) && (
@@ -1176,7 +1410,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
       {modal==='todo'&&<CreateTodoModal space={space} date={selDate} onClose={()=>setModal(null)} onCreated={()=>loadTd()}/>}
       {modal==='event'&&<CreateEventModal space={space} onClose={()=>setModal(null)} onCreated={()=>loadEv()}/>}
       {modal==='review'&&review&&<div className="dash-modal-overlay" onClick={()=>setModal(null)}><div className="dash-modal dash-modal--wide" onClick={e=>e.stopPropagation()}><h2>📊 Weekly Review</h2><div className="dash-review-stats"><div className="dash-review-stat"><span className="dash-review-stat-value">{review.completedThisWeek.length}</span><span className="dash-review-stat-label">Completed</span></div><div className={`dash-review-stat${review.overdue.length>0?' dash-review-stat--danger':''}`}><span className="dash-review-stat-value">{review.overdue.length}</span><span className="dash-review-stat-label">Overdue</span></div><div className="dash-review-stat"><span className="dash-review-stat-value">{review.upcoming.length}</span><span className="dash-review-stat-label">Upcoming</span></div><div className="dash-review-stat"><span className="dash-review-stat-value">{review.todoCompletionRate}%</span><span className="dash-review-stat-label">Todo Rate</span></div></div>{review.overdue.length>0&&<div className="dash-review-section"><h3>⚠️ Overdue</h3>{review.overdue.map(t=><div key={t.id} className="dash-review-item"><span>{t.title}</span><span className="dash-review-item-date">{fmtDate(t.due_date)}</span></div>)}</div>}{review.upcoming.length>0&&<div className="dash-review-section"><h3>📅 Upcoming</h3>{review.upcoming.map(t=><div key={t.id} className="dash-review-item"><span>{t.title}</span><span className="dash-review-item-date">{fmtDate(t.due_date)}</span></div>)}</div>}{review.completedThisWeek.length>0&&<div className="dash-review-section"><h3>✅ Completed</h3>{review.completedThisWeek.map(t=><div key={t.id} className="dash-review-item dash-review-item--done"><span>{t.title}</span></div>)}</div>}<div className="dash-modal-actions"><button className="dash-modal-cancel" onClick={()=>setModal(null)}>Close</button></div></div></div>}
-      {detailId&&<TaskDetail taskId={detailId} space={space} onClose={()=>setDetailId(null)} onUpdated={()=>loadT()} availableTags={availableTags} onTagsChanged={loadTags}/>}
+      {detailId&&<TaskDetail taskId={detailId} space={space} onClose={()=>setDetailId(null)} onUpdated={()=>loadT()} availableTags={availableTags} onTagsChanged={loadTags} allTasks={tasks}/>}
     </div>
   );
 }
