@@ -34,9 +34,8 @@ import { useEventBus } from './EventContext';
 //   - Per-event distinct celebrations. Currently one generic sparkle burst.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const DEFAULT_POS = { x: null, y: null, corner: 'br' }; // resolved on mount
 const STORAGE_KEY = 'kaseki.orb.position';
-const ORB_SIZE = 90;
+const ORB_SIZE = 76;
 const MARGIN = 24;
 
 function resolveDefaultPosition() {
