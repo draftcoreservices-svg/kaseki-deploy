@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, ArrowRight, Check, GripVertical, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, GripVertical } from 'lucide-react';
 import api from '../api';
 import SpaceIcon from '../components/SpaceIcon';
 import IconPicker, { ICON_SET } from '../components/IconPicker';
@@ -69,7 +69,6 @@ export default function OnboardingWizard({ user, onComplete, theme, onToggleThem
     } else if (!quickTarget && picked.length > 0) {
       setQuickTarget(picked[0]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, presets]);
 
   const pickedIds = order; // order already filtered to picked
@@ -295,16 +294,6 @@ function OrderScreen({ pickedIds, draft, setOrder }) {
     copy.splice(i, 0, moved);
     dragging.current = i;
     setOrder(copy);
-  };
-
-  const toggleVisible = (id, currentVisible) => {
-    // This toggles a local flag. Parent-level state will reflect via draft update
-    // through the wizard's onChange; but we don't have direct access here.
-    // Instead we dispatch through the preset-list approach: parent wraps setOrder
-    // and we emit a separate event — simplified by storing directly in draft later
-    // if needed. For Deploy 1 we'll mark visibility via the chip click on the order.
-    // (Wizard handles visibility via draft; we mutate draft here too if parent passed it.)
-    // eslint-disable-next-line no-param-reassign
   };
 
   return (
