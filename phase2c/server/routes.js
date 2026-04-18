@@ -1,0 +1,1265 @@
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { getDb } = require('./db');
+const { authenticate } = require('./auth');
+const { PRESETS, ICON_SET, COLOR_SET, getPreset } = require('./onboarding-presets');
+
+const router = express.Router();
+
+// ───────────────────────────────────────────────────────────────────────────
+// File upload config
+// ───────────────────────────────────────────────────────────────────────────
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, '..', 'uploads');
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, unique + path.extname(file.originalname));
+  },
+});
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+
+// ───────────────────────────────────────────────────────────────────────────
+// Helpers
+// ───────────────────────────────────────────────────────────────────────────
+function logActivity(taskId, userId, action, details) {
+  const db = getDb();
+  db.prepare('INSERT INTO activity_log (task_id, user_id, action, details) VALUES (?, ?, ?, ?)').run(taskId, userId, action, details);
+}
+
+function getTagsForTask(taskId) {
+  const db = getDb();
+  return db.prepare('SELECT * FROM tags WHERE id IN (SELECT tag_id FROM task_tags WHERE task_id = ?) ORDER BY name ASC').all(taskId);
+}
+
+function attachTagsToTasks(tasks) {
+  if (!tasks || tasks.length === 0) return tasks;
+  const db = getDb();
+  const ids = tasks.map(t => t.id);
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT tt.task_id, t.id, t.name, t.color FROM task_tags tt JOIN tags t ON tt.tag_id = t.id WHERE tt.task_id IN (${placeholders}) ORDER BY t.name ASC`).all(...ids);
+  const byTask = {};
+  for (const r of rows) {
+    if (!byTask[r.task_id]) byTask[r.task_id] = [];
+    byTask[r.task_id].push({ id: r.id, name: r.name, color: r.color });
+  }
+  return tasks.map(t => ({ ...t, tags: byTask[t.id] || [] }));
+}
+
+// Verify a space belongs to the current user. Returns the space row or null.
+function getUserSpace(userId, spaceId) {
+  const db = getDb();
+  const id = parseInt(spaceId);
+  if (!Number.isFinite(id)) return null;
+  return db.prepare('SELECT * FROM spaces WHERE id = ? AND user_id = ? AND archived = 0').get(id, userId);
+}
+
+function requireSpace(req, res, spaceId) {
+  const space = getUserSpace(req.user.id, spaceId);
+  if (!space) { res.status(404).json({ error: 'Space not found' }); return null; }
+  return space;
+}
+
+function safeJsonParse(s, fallback) {
+  try { return JSON.parse(s); } catch { return fallback; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SPACES
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/spaces', authenticate, (req, res) => {
+  const db = getDb();
+  const spaces = db.prepare('SELECT * FROM spaces WHERE user_id = ? AND archived = 0 ORDER BY sort_order ASC, id ASC').all(req.user.id);
+  res.json({ spaces });
+});
+
+router.get('/spaces/archived', authenticate, (req, res) => {
+  const db = getDb();
+  const spaces = db.prepare('SELECT * FROM spaces WHERE user_id = ? AND archived = 1 ORDER BY sort_order ASC, id ASC').all(req.user.id);
+  res.json({ spaces });
+});
+
+router.get('/spaces/:id', authenticate, (req, res) => {
+  const space = getUserSpace(req.user.id, req.params.id);
+  if (!space) return res.status(404).json({ error: 'Not found' });
+  res.json({ space });
+});
+
+router.post('/spaces', authenticate, (req, res) => {
+  const { name, icon, color, preset, visible } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
+  if (!icon || !ICON_SET.includes(icon)) return res.status(400).json({ error: 'Invalid icon' });
+  if (!color || !COLOR_SET.includes(color)) return res.status(400).json({ error: 'Invalid color' });
+
+  const db = getDb();
+  const max = db.prepare('SELECT MAX(sort_order) as m FROM spaces WHERE user_id = ?').get(req.user.id);
+  try {
+    const result = db.prepare(
+      'INSERT INTO spaces (user_id, name, icon, color, preset, sort_order, visible) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      req.user.id, name.trim(), icon, color, preset || null, (max?.m || 0) + 1, visible === 0 ? 0 : 1
+    );
+    const space = db.prepare('SELECT * FROM spaces WHERE id = ?').get(result.lastInsertRowid);
+    res.json({ space });
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) return res.status(409).json({ error: 'A space with that name already exists' });
+    throw err;
+  }
+});
+
+router.put('/spaces/:id', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.params.id);
+  if (!space) return;
+  const db = getDb();
+
+  const allowed = ['name', 'icon', 'color', 'visible', 'sort_order'];
+  const ups = []; const vals = [];
+  for (const f of allowed) {
+    if (req.body[f] === undefined) continue;
+    if (f === 'icon' && !ICON_SET.includes(req.body[f])) return res.status(400).json({ error: 'Invalid icon' });
+    if (f === 'color' && !COLOR_SET.includes(req.body[f])) return res.status(400).json({ error: 'Invalid color' });
+    if (f === 'name' && (!req.body[f] || !String(req.body[f]).trim())) return res.status(400).json({ error: 'Name cannot be empty' });
+    ups.push(`${f} = ?`);
+    vals.push(f === 'name' ? String(req.body[f]).trim() : req.body[f]);
+  }
+  if (ups.length === 0) return res.json({ space });
+
+  vals.push(space.id, req.user.id);
+  try {
+    db.prepare(`UPDATE spaces SET ${ups.join(', ')} WHERE id = ? AND user_id = ?`).run(...vals);
+    const updated = db.prepare('SELECT * FROM spaces WHERE id = ?').get(space.id);
+    res.json({ space: updated });
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) return res.status(409).json({ error: 'A space with that name already exists' });
+    throw err;
+  }
+});
+
+// Soft archive (sets archived=1). Child tasks remain but are hidden with the space.
+router.delete('/spaces/:id', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.params.id);
+  if (!space) return;
+  const db = getDb();
+  db.prepare('UPDATE spaces SET archived = 1 WHERE id = ? AND user_id = ?').run(space.id, req.user.id);
+  // If this was the quick capture target, clear it.
+  db.prepare('UPDATE user_preferences SET quick_capture_space_id = NULL WHERE user_id = ? AND quick_capture_space_id = ?').run(req.user.id, space.id);
+  res.json({ success: true });
+});
+
+router.post('/spaces/:id/unarchive', authenticate, (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id);
+  const space = db.prepare('SELECT * FROM spaces WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!space) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE spaces SET archived = 0 WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  const updated = db.prepare('SELECT * FROM spaces WHERE id = ?').get(id);
+  res.json({ space: updated });
+});
+
+router.put('/spaces/reorder', authenticate, (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids[] required' });
+  const db = getDb();
+  const stmt = db.prepare('UPDATE spaces SET sort_order = ? WHERE id = ? AND user_id = ?');
+  const tx = db.transaction((items) => {
+    items.forEach((id, idx) => stmt.run(idx, id, req.user.id));
+  });
+  tx(ids);
+  res.json({ success: true });
+});
+
+// Hard-delete a space and all its content (tasks, todos, events, notes, tags,
+// saved_views, task_templates cascade via FK). Destructive, used from the
+// Danger Zone in settings.
+router.delete('/spaces/:id/hard', authenticate, (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id);
+  const space = db.prepare('SELECT * FROM spaces WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!space) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE user_preferences SET quick_capture_space_id = NULL WHERE user_id = ? AND quick_capture_space_id = ?').run(req.user.id, id);
+  db.prepare('UPDATE user_preferences SET last_active_space_id = NULL WHERE user_id = ? AND last_active_space_id = ?').run(req.user.id, id);
+  db.prepare('DELETE FROM spaces WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONBOARDING
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/user/onboarding-status', authenticate, (req, res) => {
+  const db = getDb();
+  const pref = db.prepare('SELECT onboarding_complete FROM user_preferences WHERE user_id = ?').get(req.user.id);
+  res.json({ complete: pref?.onboarding_complete === 1 });
+});
+
+router.post('/user/restart-onboarding', authenticate, (req, res) => {
+  const db = getDb();
+  const ex = db.prepare('SELECT user_id FROM user_preferences WHERE user_id = ?').get(req.user.id);
+  if (ex) {
+    db.prepare('UPDATE user_preferences SET onboarding_complete = 0 WHERE user_id = ?').run(req.user.id);
+  } else {
+    db.prepare('INSERT INTO user_preferences (user_id, onboarding_complete) VALUES (?, 0)').run(req.user.id);
+  }
+  res.json({ success: true });
+});
+
+// Available preset metadata for the wizard UI.
+router.get('/onboarding/presets', authenticate, (req, res) => {
+  // Strip the default_fields from the response for Deploy 1 (not used yet).
+  const lite = PRESETS.map(p => ({
+    preset: p.preset, name: p.name, icon: p.icon, color: p.color, description: p.description,
+  }));
+  res.json({ presets: lite, icons: ICON_SET, colors: COLOR_SET });
+});
+
+// Bulk-create spaces from the wizard. Body:
+//   { spaces: [{ preset, name?, icon?, color?, visible? }, ...],
+//     quick_capture_preset: 'personal' }   // preset id from the list above
+router.post('/spaces/onboard', authenticate, (req, res) => {
+  const { spaces, quick_capture_preset } = req.body;
+  if (!Array.isArray(spaces) || spaces.length === 0) {
+    return res.status(400).json({ error: 'At least one space required' });
+  }
+
+  const db = getDb();
+  const insertStmt = db.prepare(
+    'INSERT INTO spaces (user_id, name, icon, color, preset, sort_order, visible) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
+
+  // Build a list of rows to insert with validation before touching the DB.
+  const rows = [];
+  for (let i = 0; i < spaces.length; i++) {
+    const s = spaces[i] || {};
+    const preset = s.preset ? getPreset(s.preset) : null;
+    const name = (s.name || preset?.name || '').toString().trim();
+    const icon = s.icon || preset?.icon || 'sparkles';
+    const color = s.color || preset?.color || '#64748B';
+    if (!name) return res.status(400).json({ error: `Space ${i + 1} has no name` });
+    if (!ICON_SET.includes(icon)) return res.status(400).json({ error: `Space ${i + 1}: invalid icon "${icon}"` });
+    if (!COLOR_SET.includes(color)) return res.status(400).json({ error: `Space ${i + 1}: invalid color "${color}"` });
+    rows.push({
+      name, icon, color,
+      preset: preset ? preset.preset : null,
+      visible: s.visible === 0 ? 0 : 1,
+      sort_order: i,
+      _requestedPreset: s.preset || null,
+    });
+  }
+
+  let createdSpaces = [];
+  let quickCaptureId = null;
+  try {
+    const tx = db.transaction(() => {
+      for (const r of rows) {
+        const result = insertStmt.run(req.user.id, r.name, r.icon, r.color, r.preset, r.sort_order, r.visible);
+        const space = db.prepare('SELECT * FROM spaces WHERE id = ?').get(result.lastInsertRowid);
+        createdSpaces.push(space);
+      }
+
+      // Figure out which space is the quick capture target.
+      if (quick_capture_preset) {
+        const match = createdSpaces.find(s => s.preset === quick_capture_preset);
+        if (match) quickCaptureId = match.id;
+      }
+      // Fallback: first space.
+      if (!quickCaptureId && createdSpaces.length > 0) {
+        quickCaptureId = createdSpaces[0].id;
+      }
+
+      // Upsert preferences.
+      const prefEx = db.prepare('SELECT user_id FROM user_preferences WHERE user_id = ?').get(req.user.id);
+      if (prefEx) {
+        db.prepare('UPDATE user_preferences SET onboarding_complete = 1, quick_capture_space_id = ?, last_active_space_id = COALESCE(last_active_space_id, ?) WHERE user_id = ?')
+          .run(quickCaptureId, quickCaptureId, req.user.id);
+      } else {
+        db.prepare('INSERT INTO user_preferences (user_id, onboarding_complete, quick_capture_space_id, last_active_space_id) VALUES (?, 1, ?, ?)')
+          .run(req.user.id, quickCaptureId, quickCaptureId);
+      }
+    });
+    tx();
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) {
+      return res.status(409).json({ error: 'One of the names you chose is already used by another space. Rename it and try again.' });
+    }
+    throw err;
+  }
+
+  res.json({ spaces: createdSpaces, quick_capture_space_id: quickCaptureId });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TASKS
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/tasks', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.query.space_id);
+  if (!space) return;
+  const db = getDb();
+  const tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND space_id = ? AND archived = 0 ORDER BY pinned DESC, sort_order ASC, updated_at DESC').all(req.user.id, space.id);
+  res.json({ tasks: attachTagsToTasks(tasks) });
+});
+
+router.get('/tasks/archived/list', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.query.space_id);
+  if (!space) return;
+  const db = getDb();
+  const tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND space_id = ? AND archived = 1 ORDER BY updated_at DESC').all(req.user.id, space.id);
+  res.json({ tasks: attachTagsToTasks(tasks) });
+});
+
+// Weekly review is cross-space by default. Optional ?space_id= narrows it.
+router.get('/tasks/weekly/review', authenticate, (req, res) => {
+  const now = new Date();
+  const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate() - 7);
+  const weekAhead = new Date(now); weekAhead.setDate(weekAhead.getDate() + 7);
+  const todayStr = now.toISOString().split('T')[0];
+  const weekAgoStr = weekAgo.toISOString().split('T')[0];
+  const weekAheadStr = weekAhead.toISOString().split('T')[0];
+
+  let spaceFilter = '';
+  const bind = [req.user.id];
+  if (req.query.space_id) {
+    const space = requireSpace(req, res, req.query.space_id);
+    if (!space) return;
+    spaceFilter = ' AND space_id = ?';
+    bind.push(space.id);
+  }
+
+  const db = getDb();
+  const completedThisWeek = db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND status = 'done' AND updated_at >= ?${spaceFilter} ORDER BY updated_at DESC`).all(...bind, weekAgoStr);
+  const overdue = db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date IS NOT NULL AND due_date < ?${spaceFilter} ORDER BY due_date ASC`).all(...bind, todayStr);
+  const upcoming = db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date IS NOT NULL AND due_date >= ? AND due_date <= ?${spaceFilter} ORDER BY due_date ASC`).all(...bind, todayStr, weekAheadStr);
+
+  // Todos for the review use the same scope.
+  const todosCompleted = db.prepare(`SELECT * FROM todos WHERE user_id = ? AND completed = 1 AND date >= ?${spaceFilter}`).all(...bind, weekAgoStr);
+  const todosTotal = db.prepare(`SELECT * FROM todos WHERE user_id = ? AND date >= ?${spaceFilter}`).all(...bind, weekAgoStr);
+
+  res.json({
+    completedThisWeek,
+    overdue,
+    upcoming,
+    todoCompletionRate: todosTotal.length > 0 ? Math.round((todosCompleted.length / todosTotal.length) * 100) : 0,
+    todosCompleted: todosCompleted.length,
+    todosTotal: todosTotal.length,
+  });
+});
+
+router.put('/tasks/reorder', authenticate, (req, res) => {
+  const { space_id, ids } = req.body;
+  const space = requireSpace(req, res, space_id);
+  if (!space) return;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids[] required' });
+  const db = getDb();
+  const stmt = db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ? AND user_id = ? AND space_id = ?');
+  const tx = db.transaction((items) => {
+    items.forEach((id, idx) => stmt.run(idx, id, req.user.id, space.id));
+  });
+  tx(ids);
+  res.json({ success: true });
+});
+
+router.get('/tasks/:id', authenticate, (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(parseInt(req.params.id), req.user.id);
+  if (!task) return res.status(404).json({ error: 'Not found' });
+  const subtasks = db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY sort_order ASC, id ASC').all(task.id);
+  const notes = db.prepare('SELECT * FROM task_notes WHERE task_id = ? ORDER BY created_at DESC').all(task.id);
+  const files = db.prepare('SELECT * FROM task_files WHERE task_id = ? ORDER BY created_at DESC').all(task.id);
+  const activity = db.prepare('SELECT * FROM activity_log WHERE task_id = ? ORDER BY created_at DESC').all(task.id);
+  const tags = getTagsForTask(task.id);
+  res.json({ task: { ...task, tags }, subtasks, notes, files, activity, tags });
+});
+
+router.post('/tasks', authenticate, (req, res) => {
+  const { space_id, title, description, status, priority, due_date, due_time, goals } = req.body;
+  const space = requireSpace(req, res, space_id);
+  if (!space) return;
+  if (!title) return res.status(400).json({ error: 'Title required' });
+  const db = getDb();
+  const result = db.prepare(
+    'INSERT INTO tasks (user_id,space_id,title,description,status,priority,due_date,due_time,goals) VALUES (?,?,?,?,?,?,?,?,?)'
+  ).run(
+    req.user.id, space.id, title, description || '', status || 'to_start', priority || 3,
+    due_date || null, due_time || null, goals || ''
+  );
+  logActivity(result.lastInsertRowid, req.user.id, 'created', 'Task created');
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ task: { ...task, tags: [] } });
+});
+
+router.put('/tasks/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Not found' });
+
+  const fields = ['title', 'description', 'status', 'priority', 'due_date', 'due_time', 'pinned', 'archived', 'sort_order', 'goals', 'space_id'];
+  const ups = []; const vals = [];
+  for (const f of fields) {
+    if (req.body[f] === undefined) continue;
+    if (f === 'space_id') {
+      const target = getUserSpace(req.user.id, req.body[f]);
+      if (!target) return res.status(400).json({ error: 'Invalid target space' });
+      if (target.id !== ex.space_id) logActivity(id, req.user.id, 'moved', `Moved to ${target.name}`);
+    }
+    ups.push(`${f} = ?`); vals.push(req.body[f]);
+    if (f === 'status' && req.body[f] !== ex[f]) logActivity(id, req.user.id, 'status_changed', 'Changed to ' + req.body[f]);
+    if (f === 'archived' && req.body[f] === 1 && ex[f] !== 1) logActivity(id, req.user.id, 'archived', 'Archived');
+    if (f === 'pinned' && req.body[f] !== ex[f]) logActivity(id, req.user.id, req.body[f] ? 'pinned' : 'unpinned', req.body[f] ? 'Pinned' : 'Unpinned');
+    if (f === 'title' && req.body[f] !== ex.title) logActivity(id, req.user.id, 'edited', 'Title changed');
+    if (f === 'description' && req.body[f] !== ex.description) logActivity(id, req.user.id, 'edited', 'Description updated');
+    if (f === 'goals' && req.body[f] !== ex.goals) logActivity(id, req.user.id, 'edited', 'Goals updated');
+    if (f === 'priority' && req.body[f] !== ex.priority) logActivity(id, req.user.id, 'edited', 'Priority changed to ' + req.body[f]);
+    if (f === 'due_date' && req.body[f] !== ex.due_date) logActivity(id, req.user.id, 'edited', 'Due date changed to ' + (req.body[f] || 'none'));
+  }
+  if (ups.length > 0) {
+    ups.push('updated_at = CURRENT_TIMESTAMP');
+    vals.push(id, req.user.id);
+    db.prepare('UPDATE tasks SET ' + ups.join(', ') + ' WHERE id = ? AND user_id = ?').run(...vals);
+  }
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  res.json({ task: { ...task, tags: getTagsForTask(id) } });
+});
+
+router.put('/tasks/:id/unarchive', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE tasks SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?').run(id, req.user.id);
+  logActivity(id, req.user.id, 'unarchived', 'Restored from archive');
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  res.json({ task });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUICK CAPTURE — routes to user's designated quick_capture_space_id
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.post('/quick-capture', authenticate, (req, res) => {
+  const { title, due_date, due_time, priority } = req.body;
+  if (!title || !title.trim()) return res.status(400).json({ error: 'Title required' });
+
+  const db = getDb();
+  const pref = db.prepare('SELECT quick_capture_space_id FROM user_preferences WHERE user_id = ?').get(req.user.id);
+  const targetId = pref?.quick_capture_space_id;
+  if (!targetId) {
+    return res.status(400).json({
+      error: 'No quick capture target configured',
+      code: 'no_quick_capture_space',
+      message: 'Go to Settings and pick a space to receive quick-captured tasks.',
+    });
+  }
+  const space = getUserSpace(req.user.id, targetId);
+  if (!space) {
+    // Target space was archived/deleted. Clear the stale preference.
+    db.prepare('UPDATE user_preferences SET quick_capture_space_id = NULL WHERE user_id = ?').run(req.user.id);
+    return res.status(400).json({
+      error: 'Quick capture target no longer exists',
+      code: 'stale_quick_capture_space',
+      message: 'Your quick capture target was deleted. Pick a new one in Settings.',
+    });
+  }
+
+  const result = db.prepare(
+    'INSERT INTO tasks (user_id,space_id,title,priority,due_date,due_time) VALUES (?,?,?,?,?,?)'
+  ).run(req.user.id, space.id, title.trim(), priority || 3, due_date || null, due_time || null);
+  logActivity(result.lastInsertRowid, req.user.id, 'created', `Quick-captured to ${space.name}`);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ task: { ...task, tags: [] }, space });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUBTASKS / TASK NOTES / FILES — unchanged from pre-2C (scoped via task)
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.post('/tasks/:id/subtasks', authenticate, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  const { title } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title required' });
+  const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM subtasks WHERE task_id = ?').get(taskId);
+  const result = db.prepare('INSERT INTO subtasks (task_id, title, sort_order) VALUES (?, ?, ?)').run(taskId, title, (maxOrder?.m || 0) + 1);
+  logActivity(taskId, req.user.id, 'subtask_added', 'Subtask added: ' + title);
+  const subtask = db.prepare('SELECT * FROM subtasks WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ subtask });
+});
+
+router.put('/subtasks/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const sub = db.prepare('SELECT s.*, t.user_id FROM subtasks s JOIN tasks t ON s.task_id = t.id WHERE s.id = ?').get(id);
+  if (!sub || sub.user_id !== req.user.id) return res.status(404).json({ error: 'Not found' });
+  if (req.body.completed !== undefined) {
+    db.prepare('UPDATE subtasks SET completed = ? WHERE id = ?').run(req.body.completed, id);
+    logActivity(sub.task_id, req.user.id, req.body.completed ? 'subtask_completed' : 'subtask_uncompleted', (req.body.completed ? 'Completed' : 'Uncompleted') + ': ' + sub.title);
+  }
+  if (req.body.title !== undefined) {
+    db.prepare('UPDATE subtasks SET title = ? WHERE id = ?').run(req.body.title, id);
+  }
+  const subtask = db.prepare('SELECT * FROM subtasks WHERE id = ?').get(id);
+  res.json({ subtask });
+});
+
+router.delete('/subtasks/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const sub = db.prepare('SELECT s.*, t.user_id FROM subtasks s JOIN tasks t ON s.task_id = t.id WHERE s.id = ?').get(id);
+  if (!sub || sub.user_id !== req.user.id) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM subtasks WHERE id = ?').run(id);
+  logActivity(sub.task_id, req.user.id, 'subtask_removed', 'Removed: ' + sub.title);
+  res.json({ success: true });
+});
+
+router.post('/tasks/:id/notes', authenticate, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  const { content } = req.body;
+  if (!content) return res.status(400).json({ error: 'Content required' });
+  const result = db.prepare('INSERT INTO task_notes (task_id, content) VALUES (?, ?)').run(taskId, content);
+  logActivity(taskId, req.user.id, 'note_added', 'Note added');
+  const note = db.prepare('SELECT * FROM task_notes WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ note });
+});
+
+router.post('/tasks/:id/files', authenticate, upload.single('file'), (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const result = db.prepare('INSERT INTO task_files (task_id, filename, original_name, mime_type, size) VALUES (?, ?, ?, ?, ?)').run(
+    taskId, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size
+  );
+  logActivity(taskId, req.user.id, 'file_uploaded', 'File uploaded: ' + req.file.originalname);
+  const file = db.prepare('SELECT * FROM task_files WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ file });
+});
+
+router.delete('/files/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const file = db.prepare('SELECT f.*, t.user_id FROM task_files f JOIN tasks t ON f.task_id = t.id WHERE f.id = ?').get(id);
+  if (!file || file.user_id !== req.user.id) return res.status(404).json({ error: 'Not found' });
+  const filePath = path.join(__dirname, '..', 'uploads', file.filename);
+  if (fs.existsSync(filePath)) { try { fs.unlinkSync(filePath); } catch (_) {} }
+  db.prepare('DELETE FROM task_files WHERE id = ?').run(id);
+  logActivity(file.task_id, req.user.id, 'file_deleted', 'File deleted: ' + file.original_name);
+  res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTIVITY LOG
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/tasks/:id/activity', authenticate, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  const activity = db.prepare('SELECT * FROM activity_log WHERE task_id = ? ORDER BY created_at DESC').all(taskId);
+  res.json({ activity });
+});
+
+// Cross-space recent activity for the landing page.
+// Optional ?space_id= narrows to one space. Returns space metadata for each entry.
+router.get('/activity/recent', authenticate, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+  const db = getDb();
+  let rows;
+  if (req.query.space_id) {
+    const space = requireSpace(req, res, req.query.space_id);
+    if (!space) return;
+    rows = db.prepare(`
+      SELECT a.*, t.title AS task_title, t.space_id AS task_space_id,
+             s.name AS space_name, s.color AS space_color, s.icon AS space_icon
+      FROM activity_log a
+      JOIN tasks t ON a.task_id = t.id
+      LEFT JOIN spaces s ON t.space_id = s.id
+      WHERE a.user_id = ? AND t.space_id = ?
+      ORDER BY a.created_at DESC
+      LIMIT ?
+    `).all(req.user.id, space.id, limit);
+  } else {
+    rows = db.prepare(`
+      SELECT a.*, t.title AS task_title, t.space_id AS task_space_id,
+             s.name AS space_name, s.color AS space_color, s.icon AS space_icon
+      FROM activity_log a
+      JOIN tasks t ON a.task_id = t.id
+      LEFT JOIN spaces s ON t.space_id = s.id
+      WHERE a.user_id = ?
+      ORDER BY a.created_at DESC
+      LIMIT ?
+    `).all(req.user.id, limit);
+  }
+  res.json({ activity: rows });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TODOS
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/todos', authenticate, (req, res) => {
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: 'Date required' });
+  const space = requireSpace(req, res, req.query.space_id);
+  if (!space) return;
+  const db = getDb();
+  const todos = db.prepare('SELECT * FROM todos WHERE user_id = ? AND space_id = ? AND dismissed = 0 AND (date = ? OR (date <= ? AND completed = 0)) ORDER BY created_at ASC').all(req.user.id, space.id, date, date);
+  res.json({ todos });
+});
+
+router.post('/todos', authenticate, (req, res) => {
+  const { space_id, title, date, is_recurring, recurrence_interval, recurrence_unit } = req.body;
+  const space = requireSpace(req, res, space_id);
+  if (!space) return;
+  if (!title || !date) return res.status(400).json({ error: 'Title and date required' });
+  const db = getDb();
+  const result = db.prepare(
+    'INSERT INTO todos (user_id,space_id,title,date,is_recurring,recurrence_interval,recurrence_unit) VALUES (?,?,?,?,?,?,?)'
+  ).run(req.user.id, space.id, title, date, is_recurring || 0, recurrence_interval || null, recurrence_unit || null);
+  const todo = db.prepare('SELECT * FROM todos WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ todo });
+});
+
+router.put('/todos/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM todos WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Not found' });
+  const ups = []; const vals = [];
+  for (const f of ['completed', 'dismissed']) {
+    if (req.body[f] !== undefined) { ups.push(f + ' = ?'); vals.push(req.body[f]); }
+  }
+  if (ups.length > 0) {
+    vals.push(id, req.user.id);
+    db.prepare('UPDATE todos SET ' + ups.join(', ') + ' WHERE id = ? AND user_id = ?').run(...vals);
+    if (req.body.completed === 1 && ex.is_recurring && ex.recurrence_interval) {
+      const nd = new Date(ex.date);
+      if (ex.recurrence_unit === 'days') nd.setDate(nd.getDate() + ex.recurrence_interval);
+      else if (ex.recurrence_unit === 'weeks') nd.setDate(nd.getDate() + (ex.recurrence_interval * 7));
+      else if (ex.recurrence_unit === 'months') nd.setMonth(nd.getMonth() + ex.recurrence_interval);
+      db.prepare('INSERT INTO todos (user_id,space_id,title,date,is_recurring,recurrence_interval,recurrence_unit,recurrence_parent_id) VALUES (?,?,?,?,?,?,?,?)').run(
+        req.user.id, ex.space_id, ex.title, nd.toISOString().split('T')[0], 1, ex.recurrence_interval, ex.recurrence_unit, ex.recurrence_parent_id || ex.id
+      );
+    }
+  }
+  const todo = db.prepare('SELECT * FROM todos WHERE id = ?').get(id);
+  res.json({ todo });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EVENTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/events', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.query.space_id);
+  if (!space) return;
+  const db = getDb();
+  const events = db.prepare('SELECT * FROM events WHERE user_id = ? AND space_id = ? ORDER BY date ASC, time ASC').all(req.user.id, space.id);
+  res.json({ events });
+});
+
+router.post('/events', authenticate, (req, res) => {
+  const { space_id, title, description, date, time } = req.body;
+  const space = requireSpace(req, res, space_id);
+  if (!space) return;
+  if (!title || !date) return res.status(400).json({ error: 'Title and date required' });
+  const db = getDb();
+  const result = db.prepare('INSERT INTO events (user_id,space_id,title,description,date,time) VALUES (?,?,?,?,?,?)').run(
+    req.user.id, space.id, title, description || '', date, time || null
+  );
+  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ event });
+});
+
+router.delete('/events/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ev = db.prepare('SELECT * FROM events WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ev) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM events WHERE id = ?').run(id);
+  res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NOTES (one per space, auto-saved)
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/notes', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.query.space_id);
+  if (!space) return;
+  const db = getDb();
+  const note = db.prepare('SELECT * FROM notes WHERE user_id = ? AND space_id = ?').get(req.user.id, space.id);
+  res.json({ note });
+});
+
+router.put('/notes', authenticate, (req, res) => {
+  const { space_id, content } = req.body;
+  const space = requireSpace(req, res, space_id);
+  if (!space) return;
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM notes WHERE user_id = ? AND space_id = ?').get(req.user.id, space.id);
+  if (ex) {
+    db.prepare('UPDATE notes SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND space_id = ?').run(content || '', req.user.id, space.id);
+  } else {
+    db.prepare('INSERT INTO notes (user_id,space_id,content) VALUES (?,?,?)').run(req.user.id, space.id, content || '');
+  }
+  const note = db.prepare('SELECT * FROM notes WHERE user_id = ? AND space_id = ?').get(req.user.id, space.id);
+  res.json({ note });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// USER PREFERENCES
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/preferences', authenticate, (req, res) => {
+  const db = getDb();
+  const pref = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?').get(req.user.id);
+  res.json({
+    preferences: pref || {
+      theme: 'dark', keyboard_shortcuts_enabled: 1, default_view: 'list',
+      pomodoro_work_mins: 25, pomodoro_break_mins: 5, pomodoro_long_break_mins: 15,
+      pomodoro_sessions_until_long_break: 4,
+      onboarding_complete: 0,
+      quick_capture_space_id: null,
+      last_active_space_id: null,
+    },
+  });
+});
+
+router.put('/preferences', authenticate, (req, res) => {
+  const db = getDb();
+  const allowed = [
+    'theme', 'pomodoro_work_mins', 'pomodoro_break_mins', 'pomodoro_long_break_mins',
+    'pomodoro_sessions_until_long_break', 'default_view', 'keyboard_shortcuts_enabled',
+    'quick_capture_space_id', 'last_active_space_id',
+  ];
+
+  // Validate space-ref fields: must belong to the user, or be null.
+  for (const f of ['quick_capture_space_id', 'last_active_space_id']) {
+    if (req.body[f] === undefined) continue;
+    if (req.body[f] === null) continue;
+    const s = getUserSpace(req.user.id, req.body[f]);
+    if (!s) return res.status(400).json({ error: `Invalid ${f}` });
+  }
+
+  const ex = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?').get(req.user.id);
+  if (ex) {
+    const ups = []; const vals = [];
+    for (const f of allowed) {
+      if (req.body[f] !== undefined) { ups.push(f + ' = ?'); vals.push(req.body[f]); }
+    }
+    if (ups.length > 0) {
+      vals.push(req.user.id);
+      db.prepare('UPDATE user_preferences SET ' + ups.join(', ') + ' WHERE user_id = ?').run(...vals);
+    }
+  } else {
+    db.prepare('INSERT INTO user_preferences (user_id, theme) VALUES (?, ?)').run(req.user.id, req.body.theme || 'dark');
+    const ups = []; const vals = [];
+    for (const f of allowed) {
+      if (req.body[f] !== undefined && f !== 'theme') { ups.push(f + ' = ?'); vals.push(req.body[f]); }
+    }
+    if (ups.length > 0) {
+      vals.push(req.user.id);
+      db.prepare('UPDATE user_preferences SET ' + ups.join(', ') + ' WHERE user_id = ?').run(...vals);
+    }
+  }
+  const updated = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?').get(req.user.id);
+  res.json({ preferences: updated });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TAGS
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/tags', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.query.space_id);
+  if (!space) return;
+  const db = getDb();
+  const tags = db.prepare('SELECT * FROM tags WHERE user_id = ? AND space_id = ? ORDER BY name ASC').all(req.user.id, space.id);
+  res.json({ tags });
+});
+
+router.post('/tags', authenticate, (req, res) => {
+  const { space_id, name, color } = req.body;
+  const space = requireSpace(req, res, space_id);
+  if (!space) return;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
+  const db = getDb();
+  try {
+    const result = db.prepare('INSERT INTO tags (user_id, space_id, name, color) VALUES (?, ?, ?, ?)').run(req.user.id, space.id, name.trim(), color || 'blue');
+    const tag = db.prepare('SELECT * FROM tags WHERE id = ?').get(result.lastInsertRowid);
+    res.json({ tag });
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) return res.status(409).json({ error: 'Tag already exists' });
+    throw err;
+  }
+});
+
+router.delete('/tags/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const tag = db.prepare('SELECT * FROM tags WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!tag) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM tags WHERE id = ?').run(id);
+  res.json({ success: true });
+});
+
+router.post('/tasks/:id/tags/:tagId', authenticate, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const tagId = parseInt(req.params.tagId);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  const tag = db.prepare('SELECT * FROM tags WHERE id = ? AND user_id = ?').get(tagId, req.user.id);
+  if (!task || !tag) return res.status(404).json({ error: 'Not found' });
+  if (task.space_id !== tag.space_id) return res.status(400).json({ error: 'Tag belongs to a different space' });
+  db.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)').run(taskId, tagId);
+  logActivity(taskId, req.user.id, 'tagged', 'Tag added: ' + tag.name);
+  res.json({ tags: getTagsForTask(taskId) });
+});
+
+router.delete('/tasks/:id/tags/:tagId', authenticate, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const tagId = parseInt(req.params.tagId);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  const tag = db.prepare('SELECT * FROM tags WHERE id = ? AND user_id = ?').get(tagId, req.user.id);
+  if (!task || !tag) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM task_tags WHERE task_id = ? AND tag_id = ?').run(taskId, tagId);
+  logActivity(taskId, req.user.id, 'untagged', 'Tag removed: ' + tag.name);
+  res.json({ tags: getTagsForTask(taskId) });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CSV EXPORT / IMPORT
+// ═══════════════════════════════════════════════════════════════════════════
+
+function csvEscape(val) {
+  if (val === null || val === undefined) return '';
+  const s = String(val);
+  if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+router.get('/export/csv', authenticate, (req, res) => {
+  const db = getDb();
+  let tasks;
+  let spaceNameForFile = 'all';
+  if (req.query.space_id) {
+    const space = requireSpace(req, res, req.query.space_id);
+    if (!space) return;
+    tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND space_id = ? ORDER BY id ASC').all(req.user.id, space.id);
+    spaceNameForFile = space.name.replace(/[^a-z0-9\-]+/gi, '_').toLowerCase();
+  } else {
+    tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY id ASC').all(req.user.id);
+  }
+
+  const withTags = attachTagsToTasks(tasks);
+  // Map space_id -> space name for export readability.
+  const spaces = db.prepare('SELECT id, name FROM spaces WHERE user_id = ?').all(req.user.id);
+  const spaceNameById = Object.fromEntries(spaces.map(s => [s.id, s.name]));
+
+  const cols = ['id', 'space_id', 'space_name', 'title', 'description', 'status', 'priority', 'due_date', 'pinned', 'archived', 'goals', 'tags', 'created_at', 'updated_at'];
+  const lines = [cols.join(',')];
+  for (const t of withTags) {
+    const row = cols.map(c => {
+      if (c === 'tags') return csvEscape((t.tags || []).map(tg => tg.name).join('|'));
+      if (c === 'space_name') return csvEscape(spaceNameById[t.space_id] || '');
+      return csvEscape(t[c]);
+    });
+    lines.push(row.join(','));
+  }
+  const csv = lines.join('\n');
+  const fname = `kaseki-${spaceNameForFile}-${new Date().toISOString().split('T')[0]}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  res.send(csv);
+});
+
+function parseCsvLine(line) {
+  const out = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { cur += ch; }
+    } else {
+      if (ch === ',') { out.push(cur); cur = ''; }
+      else if (ch === '"') { inQuotes = true; }
+      else { cur += ch; }
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+router.post('/import/csv', authenticate, (req, res) => {
+  const { csv, space_id } = req.body;
+  const space = requireSpace(req, res, space_id);
+  if (!space) return;
+  if (!csv) return res.status(400).json({ error: 'csv required' });
+  const lines = String(csv).split(/\r?\n/).filter(l => l.length > 0);
+  if (lines.length < 2) return res.status(400).json({ error: 'CSV has no data rows' });
+  const header = parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
+  const idx = (name) => header.indexOf(name);
+  const titleIdx = idx('title');
+  if (titleIdx === -1) return res.status(400).json({ error: 'CSV missing "title" column' });
+
+  const db = getDb();
+  let imported = 0, skipped = 0;
+  const insertTask = db.prepare('INSERT INTO tasks (user_id,space_id,title,description,status,priority,due_date,goals) VALUES (?,?,?,?,?,?,?,?)');
+
+  const tx = db.transaction(() => {
+    for (let i = 1; i < lines.length; i++) {
+      const row = parseCsvLine(lines[i]);
+      const title = (row[titleIdx] || '').trim();
+      if (!title) { skipped++; continue; }
+      const pick = (k, fallback) => { const j = idx(k); return j >= 0 ? row[j] : fallback; };
+      insertTask.run(
+        req.user.id,
+        space.id,
+        title,
+        pick('description', '') || '',
+        pick('status', 'to_start') || 'to_start',
+        parseInt(pick('priority', '3')) || 3,
+        pick('due_date', null) || null,
+        pick('goals', '') || ''
+      );
+      imported++;
+    }
+  });
+  tx();
+
+  res.json({ imported, skipped });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GLOBAL SEARCH — cross-space by default, optional ?space_id= narrows
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/search', authenticate, (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json({ tasks: [], todos: [], events: [] });
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+  const likeQ = '%' + q.toLowerCase() + '%';
+  const db = getDb();
+
+  let spaceFilter = '';
+  const spaceBind = [];
+  if (req.query.space_id) {
+    const space = requireSpace(req, res, req.query.space_id);
+    if (!space) return;
+    spaceFilter = ' AND space_id = ?';
+    spaceBind.push(space.id);
+  }
+
+  const tasks = db.prepare(`
+    SELECT id, space_id, title, description, status, priority, due_date, archived, pinned, updated_at
+    FROM tasks
+    WHERE user_id = ? AND (LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(goals) LIKE ?)${spaceFilter}
+    ORDER BY archived ASC, pinned DESC, updated_at DESC
+    LIMIT ?
+  `).all(req.user.id, likeQ, likeQ, likeQ, ...spaceBind, limit);
+
+  const todos = db.prepare(`
+    SELECT id, space_id, title, completed, date, dismissed
+    FROM todos
+    WHERE user_id = ? AND LOWER(title) LIKE ? AND dismissed = 0${spaceFilter}
+    ORDER BY date DESC
+    LIMIT ?
+  `).all(req.user.id, likeQ, ...spaceBind, limit);
+
+  const events = db.prepare(`
+    SELECT id, space_id, title, description, date, time
+    FROM events
+    WHERE user_id = ? AND (LOWER(title) LIKE ? OR LOWER(description) LIKE ?)${spaceFilter}
+    ORDER BY date DESC
+    LIMIT ?
+  `).all(req.user.id, likeQ, likeQ, ...spaceBind, limit);
+
+  // Attach space metadata so the UI can render coloured badges next to each result.
+  const spaces = db.prepare('SELECT id, name, icon, color FROM spaces WHERE user_id = ?').all(req.user.id);
+  const spaceById = Object.fromEntries(spaces.map(s => [s.id, s]));
+  const attachSpace = (arr) => arr.map(r => ({ ...r, space: spaceById[r.space_id] || null }));
+
+  res.json({
+    tasks: attachSpace(attachTagsToTasks(tasks)),
+    todos: attachSpace(todos),
+    events: attachSpace(events),
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SAVED VIEWS
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/saved-views', authenticate, (req, res) => {
+  const db = getDb();
+  let rows;
+  if (req.query.space_id) {
+    const space = requireSpace(req, res, req.query.space_id);
+    if (!space) return;
+    rows = db.prepare('SELECT * FROM saved_views WHERE user_id = ? AND space_id = ? ORDER BY sort_order ASC, created_at ASC').all(req.user.id, space.id);
+  } else {
+    rows = db.prepare('SELECT * FROM saved_views WHERE user_id = ? ORDER BY space_id, sort_order ASC, created_at ASC').all(req.user.id);
+  }
+  const views = rows.map(v => ({ ...v, filters: safeJsonParse(v.filters, {}) }));
+  res.json({ views });
+});
+
+router.post('/saved-views', authenticate, (req, res) => {
+  const { space_id, name, filters, view_type } = req.body;
+  const space = requireSpace(req, res, space_id);
+  if (!space) return;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
+  const db = getDb();
+  const filtersJson = JSON.stringify(filters || {});
+  const max = db.prepare('SELECT MAX(sort_order) as m FROM saved_views WHERE user_id = ? AND space_id = ?').get(req.user.id, space.id);
+  const result = db.prepare('INSERT INTO saved_views (user_id, space_id, name, filters, view_type, sort_order) VALUES (?, ?, ?, ?, ?, ?)').run(
+    req.user.id, space.id, name.trim(), filtersJson, view_type || 'list', (max?.m || 0) + 1
+  );
+  const view = db.prepare('SELECT * FROM saved_views WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ view: { ...view, filters: safeJsonParse(view.filters, {}) } });
+});
+
+router.put('/saved-views/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM saved_views WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Not found' });
+  const ups = []; const vals = [];
+  if (req.body.name !== undefined) { ups.push('name = ?'); vals.push(String(req.body.name).trim()); }
+  if (req.body.filters !== undefined) { ups.push('filters = ?'); vals.push(JSON.stringify(req.body.filters || {})); }
+  if (req.body.view_type !== undefined) { ups.push('view_type = ?'); vals.push(req.body.view_type); }
+  if (req.body.sort_order !== undefined) { ups.push('sort_order = ?'); vals.push(req.body.sort_order); }
+  if (ups.length > 0) {
+    vals.push(id, req.user.id);
+    db.prepare('UPDATE saved_views SET ' + ups.join(', ') + ' WHERE id = ? AND user_id = ?').run(...vals);
+  }
+  const view = db.prepare('SELECT * FROM saved_views WHERE id = ?').get(id);
+  res.json({ view: { ...view, filters: safeJsonParse(view.filters, {}) } });
+});
+
+router.delete('/saved-views/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM saved_views WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM saved_views WHERE id = ?').run(id);
+  res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TASK TEMPLATES
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/templates', authenticate, (req, res) => {
+  const db = getDb();
+  let rows;
+  if (req.query.space_id) {
+    const space = requireSpace(req, res, req.query.space_id);
+    if (!space) return;
+    rows = db.prepare('SELECT * FROM task_templates WHERE user_id = ? AND space_id = ? ORDER BY name ASC').all(req.user.id, space.id);
+  } else {
+    rows = db.prepare('SELECT * FROM task_templates WHERE user_id = ? ORDER BY space_id, name ASC').all(req.user.id);
+  }
+  const templates = rows.map(t => ({
+    ...t,
+    subtasks: safeJsonParse(t.subtasks, []),
+    tag_ids: safeJsonParse(t.tag_ids, []),
+  }));
+  res.json({ templates });
+});
+
+router.post('/templates', authenticate, (req, res) => {
+  const { space_id, name, title, description, priority, goals, subtasks, tag_ids } = req.body;
+  const space = requireSpace(req, res, space_id);
+  if (!space) return;
+  if (!name || !title) return res.status(400).json({ error: 'Name and title required' });
+  const db = getDb();
+  const result = db.prepare('INSERT INTO task_templates (user_id, space_id, name, title, description, priority, goals, subtasks, tag_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    req.user.id, space.id, name.trim(), title.trim(), description || '', priority || 3, goals || '',
+    JSON.stringify(subtasks || []), JSON.stringify(tag_ids || [])
+  );
+  const template = db.prepare('SELECT * FROM task_templates WHERE id = ?').get(result.lastInsertRowid);
+  res.json({
+    template: {
+      ...template,
+      subtasks: safeJsonParse(template.subtasks, []),
+      tag_ids: safeJsonParse(template.tag_ids, []),
+    },
+  });
+});
+
+router.put('/templates/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM task_templates WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Not found' });
+  const ups = []; const vals = [];
+  const map = { name: 'name', title: 'title', description: 'description', priority: 'priority', goals: 'goals' };
+  for (const [k, col] of Object.entries(map)) {
+    if (req.body[k] !== undefined) { ups.push(`${col} = ?`); vals.push(req.body[k]); }
+  }
+  if (req.body.subtasks !== undefined) { ups.push('subtasks = ?'); vals.push(JSON.stringify(req.body.subtasks || [])); }
+  if (req.body.tag_ids !== undefined) { ups.push('tag_ids = ?'); vals.push(JSON.stringify(req.body.tag_ids || [])); }
+  if (ups.length > 0) {
+    vals.push(id, req.user.id);
+    db.prepare('UPDATE task_templates SET ' + ups.join(', ') + ' WHERE id = ? AND user_id = ?').run(...vals);
+  }
+  const updated = db.prepare('SELECT * FROM task_templates WHERE id = ?').get(id);
+  res.json({
+    template: {
+      ...updated,
+      subtasks: safeJsonParse(updated.subtasks, []),
+      tag_ids: safeJsonParse(updated.tag_ids, []),
+    },
+  });
+});
+
+router.delete('/templates/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM task_templates WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM task_templates WHERE id = ?').run(id);
+  res.json({ success: true });
+});
+
+// Create a task from a template. Body: { due_date?, override_space_id? }
+router.post('/templates/:id/instantiate', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const tpl = db.prepare('SELECT * FROM task_templates WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!tpl) return res.status(404).json({ error: 'Not found' });
+
+  const targetSpaceId = req.body.override_space_id || tpl.space_id;
+  const space = getUserSpace(req.user.id, targetSpaceId);
+  if (!space) return res.status(400).json({ error: 'Target space not found' });
+
+  const tx = db.transaction(() => {
+    const result = db.prepare('INSERT INTO tasks (user_id, space_id, title, description, priority, goals, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      req.user.id, space.id, tpl.title, tpl.description || '', tpl.priority || 3, tpl.goals || '',
+      req.body.due_date || null
+    );
+    const taskId = result.lastInsertRowid;
+    logActivity(taskId, req.user.id, 'created', `Created from template: ${tpl.name}`);
+
+    const subtasks = safeJsonParse(tpl.subtasks, []);
+    for (let i = 0; i < subtasks.length; i++) {
+      const s = subtasks[i];
+      db.prepare('INSERT INTO subtasks (task_id, title, sort_order) VALUES (?, ?, ?)').run(taskId, typeof s === 'string' ? s : s.title, i);
+    }
+
+    const tagIds = safeJsonParse(tpl.tag_ids, []);
+    for (const tagId of tagIds) {
+      const tag = db.prepare('SELECT id, space_id FROM tags WHERE id = ? AND user_id = ?').get(tagId, req.user.id);
+      if (tag && tag.space_id === space.id) {
+        db.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)').run(taskId, tagId);
+      }
+    }
+    return taskId;
+  });
+  const newTaskId = tx();
+
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(newTaskId);
+  res.json({ task: { ...task, tags: getTagsForTask(newTaskId) } });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FOCUS / POMODORO (unchanged semantically; task_id still nullable)
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.post('/focus/start', authenticate, (req, res) => {
+  const { task_id, kind, duration_seconds } = req.body;
+  if (!duration_seconds || duration_seconds <= 0) return res.status(400).json({ error: 'Invalid duration' });
+  const db = getDb();
+  // Validate task ownership if provided.
+  if (task_id) {
+    const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(task_id, req.user.id);
+    if (!task) return res.status(400).json({ error: 'Invalid task_id' });
+  }
+  const result = db.prepare('INSERT INTO focus_sessions (user_id, task_id, kind, duration_seconds) VALUES (?, ?, ?, ?)').run(
+    req.user.id, task_id || null, kind || 'work', duration_seconds
+  );
+  const session = db.prepare('SELECT * FROM focus_sessions WHERE id = ?').get(result.lastInsertRowid);
+  res.json({ session });
+});
+
+router.put('/focus/:id/finish', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM focus_sessions WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE focus_sessions SET completed = ?, ended_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.body.completed === 0 ? 0 : 1, id);
+  const session = db.prepare('SELECT * FROM focus_sessions WHERE id = ?').get(id);
+  res.json({ session });
+});
+
+router.get('/focus/recent', authenticate, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+  const db = getDb();
+  const sessions = db.prepare('SELECT * FROM focus_sessions WHERE user_id = ? ORDER BY started_at DESC LIMIT ?').all(req.user.id, limit);
+  res.json({ sessions });
+});
+
+router.get('/focus/today', authenticate, (req, res) => {
+  const db = getDb();
+  const today = new Date().toISOString().split('T')[0];
+  const sessions = db.prepare("SELECT * FROM focus_sessions WHERE user_id = ? AND started_at >= ? ORDER BY started_at DESC").all(req.user.id, today);
+  const totalWork = sessions.filter(s => s.kind === 'work' && s.completed === 1).reduce((a, s) => a + (s.duration_seconds || 0), 0);
+  res.json({ sessions, totalWorkSeconds: totalWork, count: sessions.length });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TODAY SUMMARY + CALENDAR RANGE
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/today-summary', authenticate, (req, res) => {
+  const db = getDb();
+  const today = new Date().toISOString().split('T')[0];
+  const todos = db.prepare('SELECT * FROM todos WHERE user_id = ? AND date = ? AND dismissed = 0').all(req.user.id, today);
+  const events = db.prepare('SELECT * FROM events WHERE user_id = ? AND date = ? ORDER BY time ASC').all(req.user.id, today);
+  const dueTasks = db.prepare("SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date = ? ORDER BY priority DESC").all(req.user.id, today);
+  const overdue = db.prepare("SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date IS NOT NULL AND due_date < ? ORDER BY due_date ASC").all(req.user.id, today);
+  res.json({ todos, events, dueTasks, overdue });
+});
+
+router.get('/calendar', authenticate, (req, res) => {
+  const { start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required (YYYY-MM-DD)' });
+  const db = getDb();
+
+  let spaceFilter = '';
+  const bind = [req.user.id, start, end];
+  if (req.query.space_id) {
+    const space = requireSpace(req, res, req.query.space_id);
+    if (!space) return;
+    spaceFilter = ' AND space_id = ?';
+    bind.push(space.id);
+  }
+
+  const events = db.prepare(`SELECT * FROM events WHERE user_id = ? AND date >= ? AND date <= ?${spaceFilter} ORDER BY date ASC, time ASC`).all(...bind);
+  const tasks = db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND due_date >= ? AND due_date <= ?${spaceFilter} AND archived = 0 ORDER BY due_date ASC`).all(...bind);
+  const todos = db.prepare(`SELECT * FROM todos WHERE user_id = ? AND date >= ? AND date <= ?${spaceFilter} AND dismissed = 0 ORDER BY date ASC`).all(...bind);
+
+  res.json({ events, tasks, todos });
+});
+
+module.exports = router;

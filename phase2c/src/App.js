@@ -1,0 +1,144 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import api from './api';
+import AuthPage from './pages/AuthPage';
+import OnboardingWizard from './pages/OnboardingWizard';
+import SettingsPage from './pages/SettingsPage';
+import HoldingScreen from './pages/HoldingScreen';
+import { ToastProvider } from './components/ToastContext';
+
+// Phase 2C Deploy 1a.
+//
+// The dashboard, landing page, global search, quick capture, and pomodoro
+// routing are temporarily suspended — they depend on space_id support in the
+// frontend that ships in Deploy 1b. In their place users see the onboarding
+// wizard (first run) then a holding screen that explains the situation and
+// offers access to settings.
+//
+// All pre-existing tasks, todos, events, notes, tags, saved views, and
+// templates have been wiped by the db.js migration. This is expected and
+// agreed: the user asked for fresh-start.
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [theme, setTheme] = useState('dark');
+  const [onboardingComplete, setOnboardingComplete] = useState(null); // null = unknown yet
+  const [view, setView] = useState('holding'); // 'holding' | 'settings'
+
+  // Load user + theme + onboarding status.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await api.me();
+        if (cancelled) return;
+        setUser(me.user);
+        const pref = await api.getPreferences().catch(() => ({ preferences: null }));
+        if (cancelled) return;
+        if (pref.preferences?.theme) setTheme(pref.preferences.theme);
+        const status = await api.getOnboardingStatus().catch(() => ({ complete: false }));
+        if (cancelled) return;
+        setOnboardingComplete(!!status.complete);
+      } catch {
+        if (!cancelled) setUser(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    api.savePreferences({ theme: next }).catch(() => {});
+  }, [theme]);
+
+  const handleLogin = useCallback(async (userData) => {
+    setUser(userData);
+    // Refresh onboarding status for this user.
+    try {
+      const status = await api.getOnboardingStatus();
+      setOnboardingComplete(!!status.complete);
+    } catch {
+      setOnboardingComplete(false);
+    }
+    setView('holding');
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    await api.logout().catch(() => {});
+    setUser(null);
+    setOnboardingComplete(null);
+    setView('holding');
+  }, []);
+
+  const handleOnboardingComplete = useCallback(() => {
+    setOnboardingComplete(true);
+    setView('holding');
+  }, []);
+
+  const handleRestartOnboarding = useCallback(() => {
+    setOnboardingComplete(false);
+    setView('holding'); // wizard takes over because onboardingComplete is false
+  }, []);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  if (loading || (user && onboardingComplete === null)) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
+        <div className="auth-spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <ToastProvider>
+        <AuthPage onLogin={handleLogin} />
+      </ToastProvider>
+    );
+  }
+
+  // First-run: forced wizard.
+  if (!onboardingComplete) {
+    return (
+      <ToastProvider>
+        <OnboardingWizard
+          user={user}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onComplete={handleOnboardingComplete}
+        />
+      </ToastProvider>
+    );
+  }
+
+  // Post-onboarding: holding screen (or settings).
+  return (
+    <ToastProvider>
+      {view === 'settings' ? (
+        <SettingsPage
+          user={user}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onBack={() => setView('holding')}
+          onRestartOnboarding={handleRestartOnboarding}
+        />
+      ) : (
+        <HoldingScreen
+          user={user}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onOpenSettings={() => setView('settings')}
+          onLogout={handleLogout}
+        />
+      )}
+    </ToastProvider>
+  );
+}
