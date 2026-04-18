@@ -932,6 +932,26 @@ router.get('/tags', authenticate, (req, res) => {
   res.json({ tags: filterDeleted(tags) });
 });
 
+// Tags with usage counts for the tag manager modal.
+router.get('/tags/with-usage', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.query.space_id);
+  if (!space) return;
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT t.*, (
+      SELECT COUNT(*)
+      FROM task_tags tt
+      JOIN tasks tk ON tt.task_id = tk.id
+      WHERE tt.tag_id = t.id
+        AND tk.deleted_at IS NULL
+    ) AS usage_count
+    FROM tags t
+    WHERE t.user_id = ? AND t.space_id = ?
+    ORDER BY t.name ASC
+  `).all(req.user.id, space.id);
+  res.json({ tags: filterDeleted(rows) });
+});
+
 router.post('/tags', authenticate, (req, res) => {
   const { space_id, name, color } = req.body;
   const space = requireSpace(req, res, space_id);
@@ -946,6 +966,31 @@ router.post('/tags', authenticate, (req, res) => {
     if (String(err.message).includes('UNIQUE')) return res.status(409).json({ error: 'Tag already exists' });
     throw err;
   }
+});
+
+// Rename / recolour
+router.put('/tags/:id', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const { name, color } = req.body;
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM tags WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!ex) return res.status(404).json({ error: 'Not found' });
+  const ups = []; const vals = [];
+  if (name !== undefined) {
+    if (!name.trim()) return res.status(400).json({ error: 'Name cannot be empty' });
+    ups.push('name = ?'); vals.push(name.trim());
+  }
+  if (color !== undefined) { ups.push('color = ?'); vals.push(color); }
+  if (ups.length === 0) return res.json({ tag: ex });
+  vals.push(id, req.user.id);
+  try {
+    db.prepare('UPDATE tags SET ' + ups.join(', ') + ' WHERE id = ? AND user_id = ?').run(...vals);
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) return res.status(409).json({ error: 'Tag with that name already exists' });
+    throw err;
+  }
+  const tag = db.prepare('SELECT * FROM tags WHERE id = ?').get(id);
+  res.json({ tag });
 });
 
 router.delete('/tags/:id', authenticate, (req, res) => {

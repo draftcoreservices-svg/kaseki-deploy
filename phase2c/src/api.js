@@ -104,8 +104,10 @@ const api = {
   saveNotes: (body) => request('/notes', { method: 'PUT', body }),
 
   getTags: (spaceId) => request(`/tags?space_id=${spaceId}`),
+  getTagsWithUsage: (spaceId) => request(`/tags/with-usage?space_id=${spaceId}`),
   createTag: (body) => request('/tags', { method: 'POST', body }),
-  deleteTag: (id) => request(`/tags/${id}`, { method: 'DELETE' }),
+  updateTag: (id, body) => request(`/tags/${id}`, { method: 'PUT', body }),
+  deleteTag: (id) => request(`/tags/${id}/soft`, { method: 'DELETE' }),
   addTaskTag: (taskId, tagId) => request(`/tasks/${taskId}/tags/${tagId}`, { method: 'POST' }),
   removeTaskTag: (taskId, tagId) => request(`/tasks/${taskId}/tags/${tagId}`, { method: 'DELETE' }),
 

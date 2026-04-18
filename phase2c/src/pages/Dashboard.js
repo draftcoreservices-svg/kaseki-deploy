@@ -7,6 +7,7 @@ import CalendarView from '../components/CalendarView';
 import ViewSwitcher from '../components/ViewSwitcher';
 import SavedViewsMenu from '../components/SavedViewsMenu';
 import { TemplateManager, TemplatePicker } from '../components/TemplateManager';
+import TagManager from '../components/TagManager';
 import SpaceIcon from '../components/SpaceIcon';
 
 // ─── Status / priority / tag colour constants (unchanged from Phase 2B) ───
@@ -419,6 +420,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
   const [templateMgrOpen, setTemplateMgrOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState(null);
+  const [tagMgrOpen, setTagMgrOpen] = useState(false);
   const [selDate, setSelDate] = useState(todayStr());
   const [modal, setModal] = useState(null);
   const [ctx, setCtx] = useState(null);
@@ -827,6 +829,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
             {menuOpen && (
               <div className="dash-menu">
                 <button onClick={() => { setMenuOpen(false); setTemplateMgrOpen(true); }}><span className="dash-menu-icon">📋</span> Templates</button>
+                <button onClick={() => { setMenuOpen(false); setTagMgrOpen(true); }}><span className="dash-menu-icon">🏷️</span> Tags</button>
                 <button onClick={() => { setMenuOpen(false); onOpenPomodoro && onOpenPomodoro(); }}><span className="dash-menu-icon">🍅</span> Pomodoro</button>
                 <button onClick={() => { setMenuOpen(false); onOpenHelp && onOpenHelp(); }}><span className="dash-menu-icon">⌨️</span> Shortcuts</button>
                 <button onClick={doExport}><span className="dash-menu-icon">⬇</span> Export CSV</button>
@@ -944,6 +947,9 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
       )}
       {templateMgrOpen && (
         <TemplateManager space={space} onClose={() => setTemplateMgrOpen(false)} onChanged={() => {}} />
+      )}
+      {tagMgrOpen && (
+        <TagManager space={space} open={tagMgrOpen} onClose={() => setTagMgrOpen(false)} onChanged={() => { loadTags(); loadT(); }} />
       )}
       {modal==='todo'&&<CreateTodoModal space={space} date={selDate} onClose={()=>setModal(null)} onCreated={()=>loadTd()}/>}
       {modal==='event'&&<CreateEventModal space={space} onClose={()=>setModal(null)} onCreated={()=>loadEv()}/>}

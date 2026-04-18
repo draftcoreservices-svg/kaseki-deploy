@@ -1283,3 +1283,76 @@
   text-align: center;
   font-weight: 500;
 }
+
+/* ─── Tag Manager (Batch 3) ─────────────────────────────────────────────── */
+.tm-modal { max-width: 640px; }
+.tm-new-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 0 14px 0;
+}
+.tm-new-row input[type="text"] {
+  flex: 1 1 180px;
+  min-width: 140px;
+}
+.tm-swatches {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.tm-swatch {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 120ms, border-color 120ms;
+  padding: 0;
+}
+.tm-swatch:hover { transform: scale(1.12); }
+.tm-swatch--selected {
+  border-color: var(--text-primary, #fff);
+  transform: scale(1.15);
+}
+.tm-divider {
+  height: 1px;
+  background: var(--border-subtle, rgba(255,255,255,0.08));
+  margin: 4px 0 12px 0;
+}
+.tm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.tm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-subtle, rgba(255,255,255,0.03));
+  transition: background 120ms;
+}
+.tm-row:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); }
+.tm-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.tm-usage {
+  flex: 1;
+  color: var(--text-secondary, #9ca3af);
+  font-size: 12px;
+}
+.tm-edit-input {
+  flex: 1;
+  min-width: 120px;
+}
