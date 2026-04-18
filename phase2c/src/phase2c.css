@@ -1751,3 +1751,520 @@ select option:hover {
   background: #1e293b;
   color: #e5e7eb;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Phase D — Document Viewer
+   Full-screen modal for previewing task attachments inline.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── File list row extensions in TaskDetail ──────────────────────────── */
+.dash-file-name--button {
+  background: none;
+  border: none;
+  color: var(--accent, #3b82f6);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.15s;
+}
+.dash-file-name--button:hover {
+  text-decoration-color: var(--accent, #3b82f6);
+}
+.dash-file-view,
+.dash-file-download {
+  background: transparent;
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  color: var(--text-secondary, #9ca3af);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  margin-right: 4px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 28px;
+}
+.dash-file-view:hover,
+.dash-file-download:hover {
+  background: var(--bg-hover, rgba(255,255,255,0.08));
+  color: var(--text-primary);
+}
+
+/* ── DocumentViewer overlay ──────────────────────────────────────────── */
+.dv-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 12, 20, 0.92);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-primary, #e5e7eb);
+}
+.dv-overlay--fs {
+  background: rgba(0, 0, 0, 0.98);
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────────── */
+.dv-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+  background: var(--bg-secondary, #0f1722);
+  flex-shrink: 0;
+  min-height: 48px;
+}
+.dv-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+.dv-title-icon { flex-shrink: 0; font-size: 16px; }
+.dv-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.dv-title-count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-tertiary, #6b7280);
+  padding: 2px 8px;
+  background: var(--bg-hover, rgba(255,255,255,0.06));
+  border-radius: 10px;
+}
+.dv-topbar-actions { display: flex; gap: 4px; align-items: center; }
+.dv-iconbtn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary, #9ca3af);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 14px;
+  min-width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  transition: background 0.1s, color 0.1s;
+}
+.dv-iconbtn:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(255,255,255,0.08));
+  color: var(--text-primary, #e5e7eb);
+}
+.dv-iconbtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.dv-iconbtn.dv-close:hover {
+  background: rgba(248, 113, 113, 0.15);
+  color: #f87171;
+}
+
+/* ── Body + sidebar ──────────────────────────────────────────────────── */
+.dv-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.dv-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border, rgba(255,255,255,0.08));
+  background: var(--bg-secondary, #0f1722);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.dv-sidebar-header {
+  padding: 12px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary, #6b7280);
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+}
+.dv-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+.dv-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-primary, #e5e7eb);
+  cursor: pointer;
+  text-align: left;
+  margin-bottom: 2px;
+  font-size: 13px;
+}
+.dv-sidebar-item:hover {
+  background: var(--bg-hover, rgba(255,255,255,0.06));
+}
+.dv-sidebar-item--active {
+  background: var(--space-accent, var(--accent, #3b82f6));
+  color: #fff;
+}
+.dv-sidebar-item--active:hover {
+  background: var(--space-accent, var(--accent, #3b82f6));
+  filter: brightness(1.08);
+}
+.dv-sidebar-icon { flex-shrink: 0; font-size: 16px; }
+.dv-sidebar-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.dv-sidebar-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv-sidebar-meta {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.dv-sidebar-footer {
+  padding: 8px 16px 12px;
+  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
+}
+.dv-kbd-hint {
+  font-size: 10px;
+  color: var(--text-tertiary, #6b7280);
+  line-height: 1.5;
+}
+
+/* ── Viewport (shared by all renderers) ──────────────────────────────── */
+.dv-viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── PDF viewer ──────────────────────────────────────────────────────── */
+.dv-pdf {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.dv-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-secondary, #0f1722);
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+  flex-shrink: 0;
+}
+.dv-pdf-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border, rgba(255,255,255,0.1));
+  margin: 0 6px;
+}
+.dv-pdf-page-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.dv-pdf-page-input {
+  width: 48px;
+  padding: 4px 8px;
+  background: var(--bg-input, rgba(255,255,255,0.04));
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 4px;
+  color: var(--text-primary);
+  text-align: center;
+  font-size: 13px;
+}
+.dv-pdf-page-total {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.dv-pdf-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+  background: #1a1f2e;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.dv-pdf-page-wrap {
+  position: relative;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+.dv-pdf-canvas {
+  display: block;
+  background: #fff;
+}
+.dv-pdf-textlayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.2;
+  line-height: 1;
+  user-select: text;
+  pointer-events: auto;
+}
+.dv-pdf-textlayer > span {
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+}
+.dv-pdf-textlayer ::selection {
+  background: rgba(59, 158, 255, 0.4);
+}
+
+/* ── Image viewer ────────────────────────────────────────────────────── */
+.dv-image {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.dv-image-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-secondary, #0f1722);
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+  flex-shrink: 0;
+}
+.dv-image-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1f2e;
+  cursor: default;
+}
+.dv-image-stage--zoomable { cursor: grab; }
+.dv-image-stage--dragging { cursor: grabbing; }
+.dv-image-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* ── Text / markdown / CSV viewer ────────────────────────────────────── */
+.dv-text-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 32px;
+  background: var(--bg-primary, #0b121b);
+}
+.dv-text-pre {
+  margin: 0;
+  font-family: 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+.dv-markdown {
+  max-width: 780px;
+  margin: 0 auto;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--text-primary);
+}
+.dv-markdown h1,
+.dv-markdown h2,
+.dv-markdown h3,
+.dv-markdown h4 {
+  margin-top: 1.6em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.dv-markdown h1 { font-size: 1.85em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+.dv-markdown h2 { font-size: 1.45em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+.dv-markdown h3 { font-size: 1.2em; }
+.dv-markdown h4 { font-size: 1.05em; }
+.dv-markdown p { margin: 0.8em 0; }
+.dv-markdown a {
+  color: var(--accent, #60a5fa);
+  text-decoration: underline;
+  text-decoration-color: rgba(96, 165, 250, 0.4);
+}
+.dv-markdown a:hover { text-decoration-color: currentColor; }
+.dv-markdown ul, .dv-markdown ol { margin: 0.8em 0; padding-left: 1.8em; }
+.dv-markdown li { margin: 0.25em 0; }
+.dv-markdown blockquote {
+  margin: 1em 0;
+  padding: 0.1em 1em;
+  border-left: 3px solid var(--border, rgba(255,255,255,0.2));
+  color: var(--text-secondary);
+}
+.dv-markdown code {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  padding: 0.15em 0.4em;
+  background: var(--bg-hover, rgba(255,255,255,0.08));
+  border-radius: 3px;
+}
+.dv-markdown pre {
+  background: var(--bg-secondary, #0f1722);
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+.dv-markdown pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.9em;
+}
+.dv-markdown img { max-width: 100%; border-radius: 4px; }
+.dv-markdown table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+}
+.dv-markdown th, .dv-markdown td {
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  padding: 6px 10px;
+  text-align: left;
+}
+.dv-markdown th {
+  background: var(--bg-hover, rgba(255,255,255,0.04));
+  font-weight: 600;
+}
+.dv-markdown hr {
+  border: none;
+  border-top: 1px solid var(--border, rgba(255,255,255,0.1));
+  margin: 2em 0;
+}
+
+/* CSV table */
+.dv-csv-table {
+  border-collapse: collapse;
+  margin: 0 auto;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.dv-csv-table th,
+.dv-csv-table td {
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  padding: 6px 12px;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dv-csv-table th {
+  background: var(--bg-secondary, #0f1722);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.dv-csv-table tr:nth-child(even) td {
+  background: rgba(255,255,255,0.02);
+}
+.dv-csv-footer {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* ── Loading / error / unsupported ───────────────────────────────────── */
+.dv-loading,
+.dv-error,
+.dv-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.dv-error { color: #f87171; }
+.dv-unsupported {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 24px;
+  color: var(--text-secondary);
+}
+.dv-unsupported-icon { font-size: 48px; opacity: 0.4; }
+.dv-unsupported-title { font-size: 16px; font-weight: 500; color: var(--text-primary); }
+.dv-unsupported-meta { font-size: 13px; color: var(--text-tertiary); }
+.dv-btn {
+  display: inline-block;
+  padding: 8px 16px;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  text-decoration: none;
+  margin-top: 8px;
+}
+.dv-btn:hover { filter: brightness(1.1); }
+.dv-empty-msg {
+  background: var(--bg-secondary, #0f1722);
+  padding: 32px;
+  border-radius: 8px;
+  text-align: center;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+  max-width: 400px;
+  margin: auto;
+}
+
+/* ── Responsive: hide sidebar on narrow screens ──────────────────────── */
+@media (max-width: 720px) {
+  .dv-sidebar { width: 220px; }
+  .dv-text-scroll { padding: 16px 20px; }
+}
+@media (max-width: 520px) {
+  .dv-sidebar { display: none; }
+}

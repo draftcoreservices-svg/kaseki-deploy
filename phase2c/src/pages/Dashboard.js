@@ -11,6 +11,7 @@ import TagManager from '../components/TagManager';
 import FieldManager from '../components/FieldManager';
 import CustomFieldInput from '../components/CustomFieldInput';
 import SpaceIcon from '../components/SpaceIcon';
+import DocumentViewer, { detectKind as detectFileKind } from '../components/DocumentViewer';
 
 // ─── Status / priority / tag colour constants (unchanged from Phase 2B) ───
 
@@ -338,6 +339,7 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
   const [newNote, setNewNote] = useState('');
   const [customFields, setCustomFields] = useState([]); // array of field defs with current value
   const [customDraft, setCustomDraft] = useState({});   // { field_id: value } during edit
+  const [viewerIdx, setViewerIdx] = useState(null);     // index into files[] when viewer open; null = closed
   const fileRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -436,6 +438,7 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
   const pct = subtasks.length > 0 ? Math.round((cSubs / subtasks.length) * 100) : 0;
 
   return (
+    <>
     <div className="dash-detail-overlay" onClick={onClose}><div className="dash-detail" onClick={e => e.stopPropagation()}>
       <div className="dash-detail-header">
         {editing ? <input className="dash-detail-title-input" value={form.title} onChange={e => u('title', e.target.value)} /> : <h2>{task.title}</h2>}
@@ -495,11 +498,56 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
         {tab==='files'&&<>
           <button className="dash-file-upload-btn" onClick={()=>fileRef.current?.click()}>📎 Upload File</button>
           <input ref={fileRef} type="file" style={{display:'none'}} onChange={uploadFile}/>
-          <div className="dash-file-list">{files.map(f=><div key={f.id} className="dash-file-item"><span className="dash-file-icon">📄</span><div className="dash-file-info"><a className="dash-file-name" href={`/uploads/${f.filename}`} target="_blank" rel="noreferrer">{f.original_name}</a><span className="dash-file-meta">{fileSize(f.size)} · {fmtDateTime(f.created_at)}</span></div><button className="dash-file-delete" onClick={()=>delFile(f)}>✕</button></div>)}{files.length===0&&<div className="dash-empty-small">No files attached</div>}</div>
+          <div className="dash-file-list">
+            {files.map((f, i) => {
+              const kind = detectFileKind(f);
+              const canPreview = kind !== 'unsupported';
+              return (
+                <div key={f.id} className="dash-file-item">
+                  <span className="dash-file-icon">📄</span>
+                  <div className="dash-file-info">
+                    {canPreview ? (
+                      <button
+                        className="dash-file-name dash-file-name--button"
+                        onClick={() => setViewerIdx(i)}
+                        title="Open in viewer"
+                      >
+                        {f.original_name}
+                      </button>
+                    ) : (
+                      <a className="dash-file-name" href={`/uploads/${f.filename}`} target="_blank" rel="noreferrer">
+                        {f.original_name}
+                      </a>
+                    )}
+                    <span className="dash-file-meta">{fileSize(f.size)} · {fmtDateTime(f.created_at)}</span>
+                  </div>
+                  {canPreview && (
+                    <button className="dash-file-view" onClick={() => setViewerIdx(i)} title="View">👁</button>
+                  )}
+                  <a
+                    className="dash-file-download"
+                    href={`/uploads/${f.filename}`}
+                    download={f.original_name}
+                    title="Download"
+                  >⬇</a>
+                  <button className="dash-file-delete" onClick={()=>delFile(f)}>✕</button>
+                </div>
+              );
+            })}
+            {files.length===0&&<div className="dash-empty-small">No files attached</div>}
+          </div>
         </>}
         {tab==='activity'&&<div className="dash-activity-list">{activity.map(a=><div key={a.id} className="dash-activity-item"><div className="dash-activity-dot"/><div className="dash-activity-content"><span className="dash-activity-text">{a.details}</span><span className="dash-activity-time">{fmtDateTime(a.created_at)}</span></div></div>)}{activity.length===0&&<div className="dash-empty-small">No activity yet</div>}</div>}
       </div>
     </div></div>
+    {viewerIdx !== null && (
+      <DocumentViewer
+        files={files}
+        initialIndex={viewerIdx}
+        onClose={() => setViewerIdx(null)}
+      />
+    )}
+    </>
   );
 }
 

@@ -92,6 +92,13 @@ pct push $CT "$WORK/phase2c/src/components/CustomFieldInput.js"  /opt/kaseki/src
 pct push $CT "$WORK/phase2c/src/components/PomodoroPage.js"      /opt/kaseki/src/client-src/src/components/PomodoroPage.js
 pct push $CT "$WORK/phase2c/src/components/ShortcutHelp.js"      /opt/kaseki/src/client-src/src/components/ShortcutHelp.js
 
+# ── Phase D additions ───
+pct exec $CT -- bash -c "mkdir -p /opt/kaseki/src/client-src/src/components/viewers"
+pct push $CT "$WORK/phase2c/src/components/DocumentViewer.js"            /opt/kaseki/src/client-src/src/components/DocumentViewer.js
+pct push $CT "$WORK/phase2c/src/components/viewers/PdfViewer.js"         /opt/kaseki/src/client-src/src/components/viewers/PdfViewer.js
+pct push $CT "$WORK/phase2c/src/components/viewers/ImageViewer.js"       /opt/kaseki/src/client-src/src/components/viewers/ImageViewer.js
+pct push $CT "$WORK/phase2c/src/components/viewers/TextViewer.js"        /opt/kaseki/src/client-src/src/components/viewers/TextViewer.js
+
 pct push $CT "$WORK/phase2c/src/pages/OnboardingWizard.js"       /opt/kaseki/src/client-src/src/pages/OnboardingWizard.js
 pct push $CT "$WORK/phase2c/src/pages/SettingsPage.js"           /opt/kaseki/src/client-src/src/pages/SettingsPage.js
 pct push $CT "$WORK/phase2c/src/pages/CreateSpaceModal.js"       /opt/kaseki/src/client-src/src/pages/CreateSpaceModal.js
@@ -151,18 +158,27 @@ pct exec $CT -- bash -c "
   cd /opt/kaseki/src/client-src
   docker run --rm -v /opt/kaseki/src/client-src:/app -w /app node:20-slim bash -c '
     set -e
-    # 6a. Patch package.json to include lucide-react if missing.
+    # 6a. Patch package.json to include dependencies if missing.
     node -e \"
       const fs = require(\\\"fs\\\");
       const p = JSON.parse(fs.readFileSync(\\\"package.json\\\",\\\"utf8\\\"));
       p.dependencies = p.dependencies || {};
-      if (!p.dependencies[\\\"lucide-react\\\"]) {
-        p.dependencies[\\\"lucide-react\\\"] = \\\"^0.468.0\\\";
-        fs.writeFileSync(\\\"package.json\\\", JSON.stringify(p, null, 2));
-        console.log(\\\"[package.json] added lucide-react\\\");
-      } else {
-        console.log(\\\"[package.json] lucide-react already present\\\");
+      let changed = false;
+      const need = {
+        'lucide-react': '^0.468.0',
+        'pdfjs-dist':   '3.11.174',
+        'marked':       '^12.0.0',
+      };
+      for (const [name, ver] of Object.entries(need)) {
+        if (!p.dependencies[name]) {
+          p.dependencies[name] = ver;
+          changed = true;
+          console.log('[package.json] added ' + name + '@' + ver);
+        } else {
+          console.log('[package.json] ' + name + ' already present (' + p.dependencies[name] + ')');
+        }
       }
+      if (changed) fs.writeFileSync(\\\"package.json\\\", JSON.stringify(p, null, 2));
     \"
     echo \"[npm] installing…\"
     npm install --no-audit --no-fund --loglevel=error
