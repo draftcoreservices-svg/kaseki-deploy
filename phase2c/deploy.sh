@@ -114,10 +114,12 @@ echo "  done"
 # ── Foundation additions (EventContext + shared activity-actions.json) ───
 pct push $CT "$WORK/phase2c/src/components/EventContext.js"      /opt/kaseki/src/client-src/src/components/EventContext.js
 # The activity-actions.json file is required by BOTH server and client.
-# Server path: /opt/kaseki/src/activity-actions.json (required from server/routes.js as ../activity-actions.json)
-# Client path: /opt/kaseki/src/client-src/src/activity-actions.json (imported from pages/Dashboard.js)
-pct push $CT "$WORK/phase2c/activity-actions.json"               /opt/kaseki/src/activity-actions.json
-pct push $CT "$WORK/phase2c/activity-actions.json"               /opt/kaseki/src/client-src/src/activity-actions.json
+# Source of truth is phase2c/server/activity-actions.json so it lives inside
+# the server/ directory that the Dockerfile COPYs into the image.
+# Server target: /opt/kaseki/src/server/activity-actions.json  (require('./activity-actions.json') from routes.js)
+# Client target: /opt/kaseki/src/client-src/src/activity-actions.json (import from pages/Dashboard.js)
+pct push $CT "$WORK/phase2c/server/activity-actions.json"        /opt/kaseki/src/server/activity-actions.json
+pct push $CT "$WORK/phase2c/server/activity-actions.json"        /opt/kaseki/src/client-src/src/activity-actions.json
 
 # ── 5. Append CSS ─────────────────────────────────────────────────────
 echo ""

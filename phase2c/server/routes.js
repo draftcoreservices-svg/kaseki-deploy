@@ -75,11 +75,11 @@ const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 // ───────────────────────────────────────────────────────────────────────────
 
 // Closed vocabulary of activity_log.action values — see activity-actions.json.
-// Loaded once at module init; validated lazily so new features can't ship a
-// logActivity call with an unknown action without being noticed. The same
-// JSON file is also pushed into client-src/src/ on deploy so the frontend
-// Timeline reads an identical classification.
-const ACTIVITY_ACTIONS = require('../activity-actions.json');
+// Lives in server/ (alongside this file) so it's inside what the Dockerfile
+// COPYs into the image. The SAME file is also pushed to client-src on deploy
+// so the frontend Timeline reads an identical classification. Source of
+// truth is server/activity-actions.json; deploy copies it to the client.
+const ACTIVITY_ACTIONS = require('./activity-actions.json');
 
 function logActivity(taskId, userId, action, details) {
   if (!Object.prototype.hasOwnProperty.call(ACTIVITY_ACTIONS, action)) {
