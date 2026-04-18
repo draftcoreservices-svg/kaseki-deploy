@@ -2460,3 +2460,136 @@ select option:hover {
   background: rgba(248, 113, 113, 0.15);
   color: #f87171;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Phase C Batch 2 — Photo gallery + Timeline
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Photo gallery on Files tab ─────────────────────────────────────── */
+.dash-file-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  margin-bottom: 16px;
+}
+.dash-file-gallery-item {
+  position: relative;
+  padding: 0;
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  background: var(--bg-input, rgba(255,255,255,0.02));
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.08s ease, border-color 0.15s;
+  aspect-ratio: 1 / 1;
+}
+.dash-file-gallery-item:hover {
+  border-color: var(--space-accent, var(--accent, #3b82f6));
+  transform: translateY(-1px);
+}
+.dash-file-gallery-item img {
+  width: 100%;
+  flex: 1;
+  object-fit: cover;
+  min-height: 0;
+  background: rgba(0,0,0,0.2);
+}
+.dash-file-gallery-caption {
+  display: block;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--bg-secondary, rgba(0,0,0,0.3));
+  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
+  text-align: left;
+}
+
+/* ── Timeline tab ───────────────────────────────────────────────────── */
+.dash-timeline {
+  padding: 4px 0;
+}
+.dash-timeline-controls {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+  margin-bottom: 12px;
+}
+.dash-timeline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.dash-timeline-toggle input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--space-accent, var(--accent, #3b82f6));
+}
+.dash-timeline-group {
+  margin-bottom: 20px;
+}
+.dash-timeline-date {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 4px 0 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.04));
+}
+.dash-timeline-item {
+  display: flex;
+  gap: 12px;
+  padding: 8px 4px;
+  border-radius: 6px;
+  align-items: flex-start;
+}
+.dash-timeline-item:hover {
+  background: var(--bg-hover, rgba(255,255,255,0.02));
+}
+.dash-timeline-item--edit {
+  opacity: 0.65;
+}
+.dash-timeline-item--note {
+  background: rgba(59, 158, 255, 0.04);
+  border-left: 2px solid var(--space-accent, var(--accent, #3b82f6));
+  padding-left: 10px;
+}
+.dash-timeline-icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  margin-top: 1px;
+}
+.dash-timeline-content {
+  flex: 1;
+  min-width: 0;
+}
+.dash-timeline-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dash-timeline-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}

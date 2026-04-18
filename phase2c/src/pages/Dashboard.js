@@ -367,6 +367,8 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
   const [, setTick] = useState(0);
   // Phase C — dependency picker selected value (task id, as string).
   const [depPick, setDepPick] = useState('');
+  // Phase C Batch 2 — Timeline "show edits" toggle. Default hidden.
+  const [showEdits, setShowEdits] = useState(false);
   const fileRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -589,7 +591,7 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
         {editing ? <input className="dash-detail-title-input" value={form.title} onChange={e => u('title', e.target.value)} /> : <h2>{task.title}</h2>}
         <div className="dash-detail-actions">{editing ? <button className="dash-detail-save" onClick={save}>Save</button> : <button className="dash-detail-edit" onClick={() => setEditing(true)}>Edit</button>}<button className="dash-detail-close" onClick={onClose}>✕</button></div>
       </div>
-      <div className="dash-detail-tabs">{['details','subtasks','notes','files','depends','time','activity'].map(t => {
+      <div className="dash-detail-tabs">{['details','subtasks','notes','files','depends','time','timeline'].map(t => {
         const count = t==='subtasks'?subtasks.length:t==='files'?files.length:t==='depends'?(dependencies?.length || 0):t==='time'?(timeEntries?.length || 0):null;
         const label = t==='depends' ? 'Depends' : t.charAt(0).toUpperCase()+t.slice(1);
         return <button key={t} className={`dash-detail-tab${tab===t?' dash-detail-tab--active':''}`} onClick={()=>setTab(t)}>{label}{count!=null?` (${count})`:''}</button>;
@@ -647,44 +649,76 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
         {tab==='files'&&<>
           <button className="dash-file-upload-btn" onClick={()=>fileRef.current?.click()}>📎 Upload Files</button>
           <input ref={fileRef} type="file" multiple style={{display:'none'}} onChange={uploadFile}/>
-          <div className="dash-file-list">
-            {files.map((f, i) => {
-              const kind = detectFileKind(f);
-              const canPreview = kind !== 'unsupported';
-              return (
-                <div key={f.id} className="dash-file-item">
-                  <span className="dash-file-icon">📄</span>
-                  <div className="dash-file-info">
-                    {canPreview ? (
+          {files.length===0&&<div className="dash-empty-small">No files attached</div>}
+          {(() => {
+            // Phase C Batch 2 — split files into gallery (images) and list
+            // (everything else). Both use the same files[] indices so clicks
+            // still open DocumentViewer at the correct position — the viewer's
+            // sidebar shows every file regardless of kind.
+            const imageItems = files
+              .map((f, i) => ({ f, i, kind: detectFileKind(f) }))
+              .filter(x => x.kind === 'image');
+            const otherItems = files
+              .map((f, i) => ({ f, i, kind: detectFileKind(f) }))
+              .filter(x => x.kind !== 'image');
+            return (
+              <>
+                {imageItems.length > 0 && (
+                  <div className="dash-file-gallery">
+                    {imageItems.map(({ f, i }) => (
                       <button
-                        className="dash-file-name dash-file-name--button"
+                        key={f.id}
+                        className="dash-file-gallery-item"
                         onClick={() => setViewerIdx(i)}
-                        title="Open in viewer"
+                        title={f.original_name}
                       >
-                        {f.original_name}
+                        <img src={`/uploads/${f.filename}`} alt={f.original_name} loading="lazy" />
+                        <span className="dash-file-gallery-caption">{f.original_name}</span>
                       </button>
-                    ) : (
-                      <a className="dash-file-name" href={`/uploads/${f.filename}`} target="_blank" rel="noreferrer">
-                        {f.original_name}
-                      </a>
-                    )}
-                    <span className="dash-file-meta">{fileSize(f.size)} · {fmtDateTime(f.created_at)}</span>
+                    ))}
                   </div>
-                  {canPreview && (
-                    <button className="dash-file-view" onClick={() => setViewerIdx(i)} title="View">👁</button>
-                  )}
-                  <a
-                    className="dash-file-download"
-                    href={`/uploads/${f.filename}`}
-                    download={f.original_name}
-                    title="Download"
-                  >⬇</a>
-                  <button className="dash-file-delete" onClick={()=>delFile(f)}>✕</button>
-                </div>
-              );
-            })}
-            {files.length===0&&<div className="dash-empty-small">No files attached</div>}
-          </div>
+                )}
+                {otherItems.length > 0 && (
+                  <div className="dash-file-list">
+                    {otherItems.map(({ f, i, kind }) => {
+                      const canPreview = kind !== 'unsupported';
+                      return (
+                        <div key={f.id} className="dash-file-item">
+                          <span className="dash-file-icon">📄</span>
+                          <div className="dash-file-info">
+                            {canPreview ? (
+                              <button
+                                className="dash-file-name dash-file-name--button"
+                                onClick={() => setViewerIdx(i)}
+                                title="Open in viewer"
+                              >
+                                {f.original_name}
+                              </button>
+                            ) : (
+                              <a className="dash-file-name" href={`/uploads/${f.filename}`} target="_blank" rel="noreferrer">
+                                {f.original_name}
+                              </a>
+                            )}
+                            <span className="dash-file-meta">{fileSize(f.size)} · {fmtDateTime(f.created_at)}</span>
+                          </div>
+                          {canPreview && (
+                            <button className="dash-file-view" onClick={() => setViewerIdx(i)} title="View">👁</button>
+                          )}
+                          <a
+                            className="dash-file-download"
+                            href={`/uploads/${f.filename}`}
+                            download={f.original_name}
+                            title="Download"
+                          >⬇</a>
+                          <button className="dash-file-delete" onClick={()=>delFile(f)}>✕</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </>}
         {tab==='depends'&&<>
           {/* Phase C — Dependencies: tasks this one waits on */}
@@ -778,7 +812,110 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
             )}
           </div>
         </>}
-        {tab==='activity'&&<div className="dash-activity-list">{activity.map(a=><div key={a.id} className="dash-activity-item"><div className="dash-activity-dot"/><div className="dash-activity-content"><span className="dash-activity-text">{a.details}</span><span className="dash-activity-time">{fmtDateTime(a.created_at)}</span></div></div>)}{activity.length===0&&<div className="dash-empty-small">No activity yet</div>}</div>}
+        {tab==='timeline'&&(() => {
+          // Phase C Batch 2 — Timeline: chronological merge of notable things
+          // that happened on this task. Activity log is filtered: high-signal
+          // entries (status changes, completions, file uploads, timer events,
+          // notes, deps, tags, moves) always show; low-signal entries (title
+          // edits, priority tweaks, pin toggles, subtask add/remove) only
+          // show when Show edits is toggled on.
+          //
+          // Sources merged: activity_log, task_notes (full content), task_files
+          // (upload events), time_entries (stop events with duration). All tagged
+          // with a `kind` so the renderer can pick an icon + style.
+          const SIGNAL_ACTIONS = new Set([
+            'created', 'status_changed', 'archived', 'unarchived', 'moved',
+            'file_uploaded', 'file_deleted', 'note_added',
+            'time_started', 'time_stopped',
+            'dependency_added', 'dependency_removed',
+            'tagged', 'untagged',
+            'deleted', 'undeleted', 'subtask_completed',
+          ]);
+          const EDIT_ACTIONS = new Set([
+            'edited', 'pinned', 'unpinned',
+            'subtask_added', 'subtask_uncompleted', 'subtask_removed',
+          ]);
+          const merged = [];
+          for (const a of activity) {
+            const isSignal = SIGNAL_ACTIONS.has(a.action);
+            const isEdit = EDIT_ACTIONS.has(a.action);
+            if (!isSignal && !isEdit) continue; // unknown actions hidden either way
+            merged.push({
+              id: 'a' + a.id, at: a.created_at, kind: isSignal ? 'signal' : 'edit',
+              action: a.action, text: a.details,
+            });
+          }
+          // Notes: show the content inline, not just "note added".
+          for (const n of notes) {
+            merged.push({ id: 'n' + n.id, at: n.created_at, kind: 'note', text: n.content });
+          }
+          // Sort newest first.
+          merged.sort((x, y) => String(y.at).localeCompare(String(x.at)));
+          const visible = showEdits ? merged : merged.filter(m => m.kind !== 'edit');
+          const editCount = merged.filter(m => m.kind === 'edit').length;
+
+          const ICONS = {
+            created: '✨', status_changed: '🔄', archived: '🗂️', unarchived: '📤',
+            moved: '→', file_uploaded: '📎', file_deleted: '🗑️', note_added: '📝',
+            time_started: '▶', time_stopped: '⏸',
+            dependency_added: '🔗', dependency_removed: '✂️',
+            tagged: '🏷️', untagged: '🏷️',
+            deleted: '🗑️', undeleted: '↩️', subtask_completed: '✅',
+            edited: '✏️', pinned: '📌', unpinned: '📌',
+            subtask_added: '➕', subtask_uncompleted: '◻', subtask_removed: '➖',
+          };
+
+          // Group by date (YYYY-MM-DD) for visual separators.
+          const groups = [];
+          let currentDateKey = null;
+          for (const item of visible) {
+            const dk = String(item.at).slice(0, 10);
+            if (dk !== currentDateKey) {
+              groups.push({ dateKey: dk, items: [] });
+              currentDateKey = dk;
+            }
+            groups[groups.length - 1].items.push(item);
+          }
+
+          const dateHeader = (dk) => {
+            const d = new Date(dk + 'T00:00:00');
+            const today = todayStr();
+            const yesterday = (() => { const y = new Date(); y.setDate(y.getDate() - 1); return y.toISOString().slice(0, 10); })();
+            if (dk === today) return 'Today';
+            if (dk === yesterday) return 'Yesterday';
+            return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+          };
+
+          return (
+            <div className="dash-timeline">
+              {editCount > 0 && (
+                <div className="dash-timeline-controls">
+                  <label className="dash-timeline-toggle">
+                    <input type="checkbox" checked={showEdits} onChange={e => setShowEdits(e.target.checked)} />
+                    Show edits ({editCount})
+                  </label>
+                </div>
+              )}
+              {visible.length === 0 && <div className="dash-empty-small">No activity on this task yet</div>}
+              {groups.map(g => (
+                <div key={g.dateKey} className="dash-timeline-group">
+                  <div className="dash-timeline-date">{dateHeader(g.dateKey)}</div>
+                  {g.items.map(item => (
+                    <div key={item.id} className={`dash-timeline-item dash-timeline-item--${item.kind}`}>
+                      <span className="dash-timeline-icon">{
+                        item.kind === 'note' ? '📝' : (ICONS[item.action] || '•')
+                      }</span>
+                      <div className="dash-timeline-content">
+                        <div className="dash-timeline-text">{item.text || (item.kind === 'note' ? '(empty note)' : '')}</div>
+                        <div className="dash-timeline-time">{new Date(item.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </div>
     </div></div>
     {viewerIdx !== null && (
