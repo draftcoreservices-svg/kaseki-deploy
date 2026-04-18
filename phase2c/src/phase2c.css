@@ -1718,3 +1718,36 @@
   font-weight: 600;
   margin-bottom: 10px;
 }
+
+/* ─── Select / option readability fix ──────────────────────────────────
+   Native <select> dropdowns render their option list via the browser,
+   not CSS. Browsers honour background + color on <option> on most
+   platforms (Chrome, Edge, Firefox on Linux/Windows). Without these
+   rules, dark-theme selects often show white-on-white on Chrome/Windows
+   because the browser inherits the page background but not the text
+   colour. Forcing both ensures legibility in every theme. */
+select option,
+select optgroup {
+  background: #1e293b;      /* slate-800 */
+  color: #e5e7eb;           /* zinc-200 */
+}
+select option:checked,
+select option:hover {
+  background: #3b82f6;      /* brand blue — matches the highlighted option */
+  color: #ffffff;
+}
+/* Light theme override — when the app is in light mode, use light menu. */
+@media (prefers-color-scheme: light) {
+  [data-theme="light"] select option,
+  [data-theme="light"] select optgroup {
+    background: #ffffff;
+    color: #111827;
+  }
+}
+/* If the app stamps a theme attribute (dark mode on <html> or <body>),
+   ensure our dark option rule wins regardless of system preference. */
+[data-theme="dark"] select option,
+[data-theme="dark"] select optgroup {
+  background: #1e293b;
+  color: #e5e7eb;
+}
