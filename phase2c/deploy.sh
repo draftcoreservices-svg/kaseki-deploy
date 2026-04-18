@@ -159,23 +159,25 @@ pct exec $CT -- bash -c "
   docker run --rm -v /opt/kaseki/src/client-src:/app -w /app node:20-slim bash -c '
     set -e
     # 6a. Patch package.json to include dependencies if missing.
+    # Important: keep all JS strings as escaped double quotes. Single
+    # quotes in JS would terminate the outer docker bash -c block early.
     node -e \"
       const fs = require(\\\"fs\\\");
       const p = JSON.parse(fs.readFileSync(\\\"package.json\\\",\\\"utf8\\\"));
       p.dependencies = p.dependencies || {};
       let changed = false;
       const need = {
-        'lucide-react': '^0.468.0',
-        'pdfjs-dist':   '3.11.174',
-        'marked':       '^12.0.0',
+        \\\"lucide-react\\\": \\\"^0.468.0\\\",
+        \\\"pdfjs-dist\\\":   \\\"3.11.174\\\",
+        \\\"marked\\\":       \\\"^12.0.0\\\",
       };
       for (const [name, ver] of Object.entries(need)) {
         if (!p.dependencies[name]) {
           p.dependencies[name] = ver;
           changed = true;
-          console.log('[package.json] added ' + name + '@' + ver);
+          console.log(\\\"[package.json] added \\\" + name + \\\"@\\\" + ver);
         } else {
-          console.log('[package.json] ' + name + ' already present (' + p.dependencies[name] + ')');
+          console.log(\\\"[package.json] \\\" + name + \\\" already present (\\\" + p.dependencies[name] + \\\")\\\");
         }
       }
       if (changed) fs.writeFileSync(\\\"package.json\\\", JSON.stringify(p, null, 2));
