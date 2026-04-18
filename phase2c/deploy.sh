@@ -87,6 +87,7 @@ pct push $CT "$WORK/phase2c/src/components/MatrixView.js"        /opt/kaseki/src
 pct push $CT "$WORK/phase2c/src/components/CalendarView.js"      /opt/kaseki/src/client-src/src/components/CalendarView.js
 pct push $CT "$WORK/phase2c/src/components/TemplateManager.js"   /opt/kaseki/src/client-src/src/components/TemplateManager.js
 pct push $CT "$WORK/phase2c/src/components/TagManager.js"        /opt/kaseki/src/client-src/src/components/TagManager.js
+pct push $CT "$WORK/phase2c/src/components/FieldManager.js"      /opt/kaseki/src/client-src/src/components/FieldManager.js
 pct push $CT "$WORK/phase2c/src/components/CustomFieldInput.js"  /opt/kaseki/src/client-src/src/components/CustomFieldInput.js
 pct push $CT "$WORK/phase2c/src/components/PomodoroPage.js"      /opt/kaseki/src/client-src/src/components/PomodoroPage.js
 pct push $CT "$WORK/phase2c/src/components/ShortcutHelp.js"      /opt/kaseki/src/client-src/src/components/ShortcutHelp.js

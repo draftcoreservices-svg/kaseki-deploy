@@ -1106,29 +1106,64 @@ router.get('/export/csv', authenticate, (req, res) => {
   const db = getDb();
   let tasks;
   let spaceNameForFile = 'all';
+  let fieldDefs = []; // custom field definitions in scope
   if (req.query.space_id) {
     const space = requireSpace(req, res, req.query.space_id);
     if (!space) return;
     tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND space_id = ? ORDER BY id ASC').all(req.user.id, space.id);
     spaceNameForFile = space.name.replace(/[^a-z0-9\-]+/gi, '_').toLowerCase();
+    fieldDefs = db.prepare('SELECT id, field_key, label, type FROM custom_field_definitions WHERE user_id = ? AND space_id = ? ORDER BY sort_order ASC, id ASC').all(req.user.id, space.id);
   } else {
     tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY id ASC').all(req.user.id);
+    // Cross-space export: include every distinct field across the user's spaces.
+    fieldDefs = db.prepare('SELECT id, field_key, label, type FROM custom_field_definitions WHERE user_id = ? ORDER BY space_id ASC, sort_order ASC, id ASC').all(req.user.id);
   }
 
   const withTags = attachTagsToTasks(tasks);
-  // Map space_id -> space name for export readability.
   const spaces = db.prepare('SELECT id, name FROM spaces WHERE user_id = ?').all(req.user.id);
   const spaceNameById = Object.fromEntries(spaces.map(s => [s.id, s.name]));
 
-  const cols = ['id', 'space_id', 'space_name', 'title', 'description', 'status', 'priority', 'due_date', 'pinned', 'archived', 'goals', 'tags', 'created_at', 'updated_at'];
+  // Preload custom field values for all tasks in one query.
+  let fieldValsByTask = {};
+  if (tasks.length > 0 && fieldDefs.length > 0) {
+    const taskIds = tasks.map(t => t.id);
+    const placeholders = taskIds.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT task_id, field_id, value
+      FROM custom_field_values
+      WHERE task_id IN (${placeholders})
+    `).all(...taskIds);
+    for (const r of rows) {
+      if (!fieldValsByTask[r.task_id]) fieldValsByTask[r.task_id] = {};
+      fieldValsByTask[r.task_id][r.field_id] = r.value;
+    }
+  }
+
+  const baseCols = ['id', 'space_id', 'space_name', 'title', 'description', 'status', 'priority', 'due_date', 'pinned', 'archived', 'goals', 'tags', 'created_at', 'updated_at'];
+  // Custom field columns use field_key; label goes into a secondary header
+  // line is overkill — we just prefix with cf_ so the column is obviously a
+  // custom field and the label is human-reference via export_fields.json.
+  const cfCols = fieldDefs.map(f => `cf_${f.field_key}`);
+  const cols = [...baseCols, ...cfCols];
+
   const lines = [cols.join(',')];
   for (const t of withTags) {
-    const row = cols.map(c => {
+    const baseValues = baseCols.map(c => {
       if (c === 'tags') return csvEscape((t.tags || []).map(tg => tg.name).join('|'));
       if (c === 'space_name') return csvEscape(spaceNameById[t.space_id] || '');
       return csvEscape(t[c]);
     });
-    lines.push(row.join(','));
+    const cfValues = fieldDefs.map(f => {
+      const raw = fieldValsByTask[t.id]?.[f.id];
+      if (raw === undefined || raw === null) return '';
+      // multi-select is stored as JSON array — flatten to pipe-separated for CSV.
+      if (f.type === 'multi-select') {
+        try { const arr = JSON.parse(raw); return csvEscape(Array.isArray(arr) ? arr.join('|') : raw); }
+        catch { return csvEscape(raw); }
+      }
+      return csvEscape(raw);
+    });
+    lines.push([...baseValues, ...cfValues].join(','));
   }
   const csv = lines.join('\n');
   const fname = `kaseki-${spaceNameForFile}-${new Date().toISOString().split('T')[0]}.csv`;
@@ -1224,10 +1259,18 @@ router.get('/search', authenticate, (req, res) => {
     WHERE t.user_id = ?
       AND t.deleted_at IS NULL
       AND (s.archived IS NULL OR s.archived = 0)
-      AND (LOWER(t.title) LIKE ? OR LOWER(t.description) LIKE ? OR LOWER(t.goals) LIKE ?)${spaceFilter.replace('space_id', 't.space_id')}
+      AND (
+        LOWER(t.title) LIKE ?
+        OR LOWER(t.description) LIKE ?
+        OR LOWER(t.goals) LIKE ?
+        OR EXISTS (
+          SELECT 1 FROM custom_field_values v
+          WHERE v.task_id = t.id AND LOWER(v.value) LIKE ?
+        )
+      )${spaceFilter.replace('space_id', 't.space_id')}
     ORDER BY t.archived ASC, t.pinned DESC, t.updated_at DESC
     LIMIT ?
-  `).all(req.user.id, likeQ, likeQ, likeQ, ...spaceBind, limit);
+  `).all(req.user.id, likeQ, likeQ, likeQ, likeQ, ...spaceBind, limit);
 
   const todos = db.prepare(`
     SELECT t.id, t.space_id, t.title, t.completed, t.date, t.dismissed
@@ -1706,6 +1749,146 @@ router.put('/tasks/:id/fields', authenticate, (req, res) => {
   tx();
 
   logActivity(id, req.user.id, 'edited', 'Custom fields updated');
+  res.json({ success: true });
+});
+
+// ── Field definition CRUD (Batch 5) ───────────────────────────────────────
+const VALID_FIELD_TYPES = [
+  'text', 'long-text', 'number', 'currency',
+  'date', 'datetime', 'checkbox',
+  'dropdown', 'multi-select',
+  'email', 'url', 'phone',
+];
+
+function slugifyKey(label) {
+  return String(label || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || 'field';
+}
+
+// Field definitions with usage count (how many tasks in the space have
+// a non-null value for this field). Used by the field manager modal to
+// warn before deletion.
+router.get('/spaces/:id/fields/with-usage', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.params.id);
+  if (!space) return;
+  runCustomFieldBackfillOnce(req.user.id);
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT d.*, (
+      SELECT COUNT(*) FROM custom_field_values v
+      JOIN tasks t ON v.task_id = t.id
+      WHERE v.field_id = d.id
+        AND t.deleted_at IS NULL
+        AND v.value IS NOT NULL
+        AND v.value != ''
+    ) AS usage_count
+    FROM custom_field_definitions d
+    WHERE d.user_id = ? AND d.space_id = ?
+    ORDER BY d.sort_order ASC, d.id ASC
+  `).all(req.user.id, space.id);
+  res.json({ fields: rows.map(parseFieldDef) });
+});
+
+router.post('/spaces/:id/fields', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.params.id);
+  if (!space) return;
+  const { label, type, options, required, show_in_list, show_in_create } = req.body || {};
+  if (!label || !String(label).trim()) return res.status(400).json({ error: 'Label required' });
+  if (!VALID_FIELD_TYPES.includes(type)) return res.status(400).json({ error: 'Invalid type' });
+  if ((type === 'dropdown' || type === 'multi-select') && (!Array.isArray(options) || options.length === 0)) {
+    return res.status(400).json({ error: `${type} requires at least one option` });
+  }
+
+  const db = getDb();
+  // Next sort_order
+  const max = db.prepare('SELECT MAX(sort_order) AS m FROM custom_field_definitions WHERE user_id = ? AND space_id = ?').get(req.user.id, space.id);
+  const nextOrder = (max?.m ?? -1) + 1;
+
+  // Generate a unique field_key from the label.
+  let base = slugifyKey(label);
+  let key = base;
+  let n = 1;
+  while (db.prepare('SELECT 1 FROM custom_field_definitions WHERE user_id = ? AND space_id = ? AND field_key = ?').get(req.user.id, space.id, key)) {
+    n++;
+    key = `${base}_${n}`;
+  }
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO custom_field_definitions
+        (user_id, space_id, field_key, label, type, options, required, show_in_list, show_in_create, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      req.user.id, space.id, key, String(label).trim(), type,
+      options ? JSON.stringify(options) : null,
+      required ? 1 : 0, show_in_list ? 1 : 0, show_in_create ? 1 : 0,
+      nextOrder
+    );
+    const field = db.prepare('SELECT * FROM custom_field_definitions WHERE id = ?').get(result.lastInsertRowid);
+    res.json({ field: parseFieldDef(field) });
+  } catch (err) {
+    if (String(err.message).includes('UNIQUE')) return res.status(409).json({ error: 'Field already exists' });
+    throw err;
+  }
+});
+
+router.put('/spaces/:spaceId/fields/:fieldId', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.params.spaceId);
+  if (!space) return;
+  const fieldId = parseInt(req.params.fieldId);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM custom_field_definitions WHERE id = ? AND user_id = ? AND space_id = ?').get(fieldId, req.user.id, space.id);
+  if (!ex) return res.status(404).json({ error: 'Field not found' });
+
+  const { label, options, required, show_in_list, show_in_create } = req.body || {};
+  const ups = []; const vals = [];
+  if (label !== undefined) {
+    if (!String(label).trim()) return res.status(400).json({ error: 'Label cannot be empty' });
+    ups.push('label = ?'); vals.push(String(label).trim());
+  }
+  if (options !== undefined) {
+    if ((ex.type === 'dropdown' || ex.type === 'multi-select') && (!Array.isArray(options) || options.length === 0)) {
+      return res.status(400).json({ error: `${ex.type} requires at least one option` });
+    }
+    ups.push('options = ?'); vals.push(options ? JSON.stringify(options) : null);
+  }
+  if (required !== undefined)      { ups.push('required = ?');       vals.push(required ? 1 : 0); }
+  if (show_in_list !== undefined)  { ups.push('show_in_list = ?');   vals.push(show_in_list ? 1 : 0); }
+  if (show_in_create !== undefined){ ups.push('show_in_create = ?'); vals.push(show_in_create ? 1 : 0); }
+
+  if (ups.length === 0) return res.json({ field: parseFieldDef(ex) });
+  vals.push(fieldId);
+  db.prepare(`UPDATE custom_field_definitions SET ${ups.join(', ')} WHERE id = ?`).run(...vals);
+  const field = db.prepare('SELECT * FROM custom_field_definitions WHERE id = ?').get(fieldId);
+  res.json({ field: parseFieldDef(field) });
+});
+
+router.delete('/spaces/:spaceId/fields/:fieldId', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.params.spaceId);
+  if (!space) return;
+  const fieldId = parseInt(req.params.fieldId);
+  const db = getDb();
+  const ex = db.prepare('SELECT * FROM custom_field_definitions WHERE id = ? AND user_id = ? AND space_id = ?').get(fieldId, req.user.id, space.id);
+  if (!ex) return res.status(404).json({ error: 'Field not found' });
+  // FK cascade removes all custom_field_values for this field.
+  db.prepare('DELETE FROM custom_field_definitions WHERE id = ?').run(fieldId);
+  res.json({ success: true });
+});
+
+router.put('/spaces/:id/fields/reorder', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.params.id);
+  if (!space) return;
+  const { order } = req.body || {};
+  if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
+  const db = getDb();
+  const upd = db.prepare('UPDATE custom_field_definitions SET sort_order = ? WHERE id = ? AND user_id = ? AND space_id = ?');
+  const tx = db.transaction(() => {
+    order.forEach((id, i) => { upd.run(i, id, req.user.id, space.id); });
+  });
+  tx();
   res.json({ success: true });
 });
 

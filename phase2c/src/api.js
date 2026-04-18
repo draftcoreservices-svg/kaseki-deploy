@@ -113,6 +113,11 @@ const api = {
 
   // ── Custom fields (Phase B) ─────────────────────────────────────────────
   getSpaceFields: (spaceId) => request(`/spaces/${spaceId}/fields`),
+  getSpaceFieldsWithUsage: (spaceId) => request(`/spaces/${spaceId}/fields/with-usage`),
+  createField: (spaceId, body) => request(`/spaces/${spaceId}/fields`, { method: 'POST', body }),
+  updateField: (spaceId, fieldId, body) => request(`/spaces/${spaceId}/fields/${fieldId}`, { method: 'PUT', body }),
+  deleteField: (spaceId, fieldId) => request(`/spaces/${spaceId}/fields/${fieldId}`, { method: 'DELETE' }),
+  reorderFields: (spaceId, order) => request(`/spaces/${spaceId}/fields/reorder`, { method: 'PUT', body: { order } }),
   getTaskFields: (taskId) => request(`/tasks/${taskId}/fields`),
   saveTaskFields: (taskId, values) => request(`/tasks/${taskId}/fields`, { method: 'PUT', body: { values } }),
 

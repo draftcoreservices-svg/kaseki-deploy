@@ -8,6 +8,7 @@ import ViewSwitcher from '../components/ViewSwitcher';
 import SavedViewsMenu from '../components/SavedViewsMenu';
 import { TemplateManager, TemplatePicker } from '../components/TemplateManager';
 import TagManager from '../components/TagManager';
+import FieldManager from '../components/FieldManager';
 import CustomFieldInput from '../components/CustomFieldInput';
 import SpaceIcon from '../components/SpaceIcon';
 
@@ -33,6 +34,21 @@ function fmtDateTime(d) { if (!d) return ''; return new Date(d).toLocaleString('
 function todayStr() { return new Date().toISOString().split('T')[0]; }
 function isOverdue(d) { return d && d < todayStr(); }
 function fileSize(b) { if (b < 1024) return b + 'B'; if (b < 1048576) return (b/1024).toFixed(1) + 'KB'; return (b/1048576).toFixed(1) + 'MB'; }
+
+// Compact one-line display of a custom field value for the task-list peek.
+function formatPeek(f, v) {
+  if (v == null || v === '') return '—';
+  if (f.type === 'checkbox') return (v === '1' || v === 1) ? '✓' : '—';
+  if (f.type === 'multi-select') {
+    try { const a = JSON.parse(v); if (Array.isArray(a)) return a.join(', '); } catch {}
+    return String(v);
+  }
+  if (f.type === 'date') { const dt = new Date(v); return isNaN(dt) ? String(v) : dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); }
+  if (f.type === 'datetime') { const dt = new Date(v); return isNaN(dt) ? String(v) : dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); }
+  if (f.type === 'currency') { const n = parseFloat(v); return Number.isFinite(n) ? `£${n.toFixed(2)}` : String(v); }
+  const s = String(v);
+  return s.length > 28 ? s.slice(0, 27) + '…' : s;
+}
 
 // ─── TagChip ───
 
@@ -98,9 +114,35 @@ function CreateTaskModal({ space, onClose, onCreated, prefillTemplate }) {
     };
   });
   const [loading, setLoading] = useState(false);
+  const [fields, setFields] = useState([]); // show_in_create fields for this space
+  const [fieldDraft, setFieldDraft] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    api.getSpaceFields(space.id)
+      .then(d => {
+        if (cancelled) return;
+        const visible = (d.fields || []).filter(f => f.show_in_create || f.required);
+        setFields(visible);
+        const initial = {};
+        for (const f of visible) initial[f.field_id || f.id] = '';
+        setFieldDraft(initial);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [space.id]);
   const u = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const submit = async () => {
     if (!form.title) return;
+    // Client-side required-field check
+    for (const f of fields) {
+      if (f.required) {
+        const v = fieldDraft[f.id];
+        if (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0)) {
+          toast.show({ message: `${f.label} is required`, type: 'error' });
+          return;
+        }
+      }
+    }
     setLoading(true);
     try {
       let created;
@@ -122,6 +164,12 @@ function CreateTaskModal({ space, onClose, onCreated, prefillTemplate }) {
       } else {
         const d = await api.createTask({ ...form, space_id: space.id });
         created = d.task;
+      }
+      // Save custom field values if any were filled in.
+      const nonEmpty = Object.entries(fieldDraft).filter(([, v]) => v !== '' && v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0));
+      if (created && nonEmpty.length > 0) {
+        try { await api.saveTaskFields(created.id, Object.fromEntries(nonEmpty)); }
+        catch (e) { toast.show({ message: 'Task created but fields failed to save: ' + e.message, type: 'error' }); }
       }
       onCreated(created);
       toast.show({ message: prefillTemplate ? `Created from "${prefillTemplate.name}"` : 'Task created', type: 'success' });
@@ -145,6 +193,24 @@ function CreateTaskModal({ space, onClose, onCreated, prefillTemplate }) {
       </div>
       <div className="dash-modal-field"><label>Due Date</label><input type="date" value={form.due_date} onChange={e => u('due_date', e.target.value)} /></div>
       <div className="dash-modal-field"><label>Goals</label><textarea rows={2} value={form.goals} onChange={e => u('goals', e.target.value)} placeholder="What does done look like?" /></div>
+      {fields.length > 0 && (
+        <div className="dash-modal-cf-section">
+          <div className="dash-modal-cf-heading">{space.name} fields</div>
+          <div className="cf-grid">
+            {fields.map(f => (
+              <div key={f.id} className="cf-row">
+                {f.type !== 'checkbox' && <label className="cf-label">{f.label}{f.required ? ' *' : ''}</label>}
+                <CustomFieldInput
+                  field={f}
+                  value={fieldDraft[f.id]}
+                  onChange={(v) => setFieldDraft(d => ({ ...d, [f.id]: v }))}
+                  editing={true}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="dash-modal-actions"><button className="dash-modal-cancel" onClick={onClose}>Cancel</button><button className="dash-modal-save" disabled={loading || !form.title} onClick={submit}>{loading ? 'Creating...' : 'Create Task'}</button></div>
     </div></div>
   );
@@ -459,6 +525,9 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState(null);
   const [tagMgrOpen, setTagMgrOpen] = useState(false);
+  const [fieldMgrOpen, setFieldMgrOpen] = useState(false);
+  const [spaceFields, setSpaceFields] = useState([]); // field defs for the space — used by list peek + create modal
+  const [taskFieldValues, setTaskFieldValues] = useState({}); // { taskId: { fieldId: value } } cache for list peek
   const [selDate, setSelDate] = useState(todayStr());
   const [modal, setModal] = useState(null);
   const [ctx, setCtx] = useState(null);
@@ -496,13 +565,48 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
   const loadTags = useCallback(async () => {
     try { const d = await api.getTags(space.id); setAvailableTags(d.tags || []); } catch (e) {}
   }, [space.id]);
+  const loadSpaceFields = useCallback(async () => {
+    try { const d = await api.getSpaceFields(space.id); setSpaceFields(d.fields || []); }
+    catch (e) { setSpaceFields([]); }
+  }, [space.id]);
 
   useEffect(() => { loadT(); }, [loadT]);
   useEffect(() => { loadTd(); }, [loadTd]);
   useEffect(() => { loadEv(); }, [loadEv]);
   useEffect(() => { loadN(); }, [loadN]);
   useEffect(() => { loadTags(); }, [loadTags]);
+  useEffect(() => { loadSpaceFields(); }, [loadSpaceFields]);
   useEffect(() => { setBulkSel(new Set()); }, [space.id, showArch]);
+
+  // Load peek values for all tasks when either tasks or field defs change.
+  // Skips entirely if no fields are flagged show_in_list — zero cost path.
+  useEffect(() => {
+    const peekFieldIds = spaceFields.filter(f => f.show_in_list).map(f => f.id);
+    if (peekFieldIds.length === 0 || tasks.length === 0) {
+      setTaskFieldValues({});
+      return;
+    }
+    // Batch load: one call per task (simple and fine at household scale).
+    // In practice most spaces will have <50 visible tasks.
+    let cancelled = false;
+    (async () => {
+      const map = {};
+      for (const t of tasks) {
+        try {
+          const d = await api.getTaskFields(t.id);
+          map[t.id] = {};
+          for (const f of (d.fields || [])) {
+            if (peekFieldIds.includes(f.field_id) && f.value != null && f.value !== '') {
+              map[t.id][f.field_id] = f.value;
+            }
+          }
+        } catch (e) { /* silent */ }
+        if (cancelled) return;
+      }
+      if (!cancelled) setTaskFieldValues(map);
+    })();
+    return () => { cancelled = true; };
+  }, [tasks, spaceFields]);
 
   // Load default view preference once on mount
   useEffect(() => {
@@ -831,6 +935,24 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
           {t.tags.map(tag => <TagChip key={tag.id} tag={tag} />)}
         </div>
       )}
+      {(() => {
+        const peekFields = spaceFields.filter(f => f.show_in_list);
+        const values = taskFieldValues[t.id] || {};
+        const chips = peekFields
+          .map(f => ({ f, v: values[f.id] }))
+          .filter(x => x.v != null && x.v !== '');
+        if (chips.length === 0) return null;
+        return (
+          <div className="dash-task-item-peek">
+            {chips.map(({ f, v }) => (
+              <span key={f.id} className="dash-peek-chip" title={`${f.label}: ${v}`}>
+                <span className="dash-peek-chip-label">{f.label}:</span>
+                <span className="dash-peek-chip-value">{formatPeek(f, v)}</span>
+              </span>
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 
@@ -868,6 +990,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
               <div className="dash-menu">
                 <button onClick={() => { setMenuOpen(false); setTemplateMgrOpen(true); }}><span className="dash-menu-icon">📋</span> Templates</button>
                 <button onClick={() => { setMenuOpen(false); setTagMgrOpen(true); }}><span className="dash-menu-icon">🏷️</span> Tags</button>
+                <button onClick={() => { setMenuOpen(false); setFieldMgrOpen(true); }}><span className="dash-menu-icon">🧩</span> Fields</button>
                 <button onClick={() => { setMenuOpen(false); onOpenPomodoro && onOpenPomodoro(); }}><span className="dash-menu-icon">🍅</span> Pomodoro</button>
                 <button onClick={() => { setMenuOpen(false); onOpenHelp && onOpenHelp(); }}><span className="dash-menu-icon">⌨️</span> Shortcuts</button>
                 <button onClick={doExport}><span className="dash-menu-icon">⬇</span> Export CSV</button>
@@ -988,6 +1111,9 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
       )}
       {tagMgrOpen && (
         <TagManager space={space} open={tagMgrOpen} onClose={() => setTagMgrOpen(false)} onChanged={() => { loadTags(); loadT(); }} />
+      )}
+      {fieldMgrOpen && (
+        <FieldManager space={space} open={fieldMgrOpen} onClose={() => setFieldMgrOpen(false)} onChanged={() => { loadSpaceFields(); loadT(); }} />
       )}
       {modal==='todo'&&<CreateTodoModal space={space} date={selDate} onClose={()=>setModal(null)} onCreated={()=>loadTd()}/>}
       {modal==='event'&&<CreateEventModal space={space} onClose={()=>setModal(null)} onCreated={()=>loadEv()}/>}
