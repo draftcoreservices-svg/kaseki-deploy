@@ -10,6 +10,7 @@ import GlobalSearch from './components/GlobalSearch';
 import QuickCapture from './components/QuickCapture';
 import ShortcutHelp from './components/ShortcutHelp';
 import { ToastProvider } from './components/ToastContext';
+import { EventProvider } from './components/EventContext';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -147,26 +148,31 @@ export default function App() {
 
   if (!user) {
     return (
-      <ToastProvider>
-        <AuthPage onLogin={handleLogin} />
-      </ToastProvider>
+      <EventProvider>
+        <ToastProvider>
+          <AuthPage onLogin={handleLogin} />
+        </ToastProvider>
+      </EventProvider>
     );
   }
 
   if (!onboardingComplete) {
     return (
-      <ToastProvider>
-        <OnboardingWizard
-          user={user}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          onComplete={handleOnboardingComplete}
-        />
-      </ToastProvider>
+      <EventProvider>
+        <ToastProvider>
+          <OnboardingWizard
+            user={user}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            onComplete={handleOnboardingComplete}
+          />
+        </ToastProvider>
+      </EventProvider>
     );
   }
 
   return (
+    <EventProvider>
     <ToastProvider>
       {view === 'settings' && (
         <SettingsPage
@@ -223,5 +229,6 @@ export default function App() {
       />
       <ShortcutHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
     </ToastProvider>
+    </EventProvider>
   );
 }

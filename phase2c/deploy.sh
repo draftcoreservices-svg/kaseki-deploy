@@ -111,6 +111,14 @@ pct push $CT "$WORK/phase2c/src/components/LegalModal.js"        /opt/kaseki/src
 pct push $CT "$WORK/phase2c/src/legal-documents.js"              /opt/kaseki/src/client-src/src/legal-documents.js
 echo "  done"
 
+# ── Foundation additions (EventContext + shared activity-actions.json) ───
+pct push $CT "$WORK/phase2c/src/components/EventContext.js"      /opt/kaseki/src/client-src/src/components/EventContext.js
+# The activity-actions.json file is required by BOTH server and client.
+# Server path: /opt/kaseki/src/activity-actions.json (required from server/routes.js as ../activity-actions.json)
+# Client path: /opt/kaseki/src/client-src/src/activity-actions.json (imported from pages/Dashboard.js)
+pct push $CT "$WORK/phase2c/activity-actions.json"               /opt/kaseki/src/activity-actions.json
+pct push $CT "$WORK/phase2c/activity-actions.json"               /opt/kaseki/src/client-src/src/activity-actions.json
+
 # ── 5. Append CSS ─────────────────────────────────────────────────────
 echo ""
 echo "[5/8] Appending Phase 2C CSS to index.css…"

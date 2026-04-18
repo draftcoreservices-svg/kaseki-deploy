@@ -26,6 +26,7 @@ function initDb() {
   initDependentTables();       // subtasks, task_notes, task_files, activity_log, task_tags, focus_sessions
   initUserPreferences();       // base table + ensureColumn for new fields
   initSoftDeleteColumns();     // deleted_at on tasks/todos/events/tags (idempotent)
+  initFoundationColumns();     // Foundation: encrypted + is_client_identifier flags on custom_field_definitions
   initIndexes();
 
   return db;
@@ -463,6 +464,27 @@ function initSoftDeleteColumns() {
   ensureColumn('todos', 'deleted_at', 'DATETIME');
   ensureColumn('events', 'deleted_at', 'DATETIME');
   ensureColumn('tags', 'deleted_at', 'DATETIME');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Foundation columns — added ahead of features that will use them, so those
+// features ship as UI-only changes without schema migrations.
+//
+// encrypted (Phase G — sensitive cards with encryption): when a field has
+//   this flag set, its values in custom_field_values are encrypted at rest
+//   with a user-supplied passcode. Until Phase G ships, the column exists
+//   but stays 0; no encryption is performed. API accepts but does not
+//   surface the flag.
+//
+// is_client_identifier (Phase C Batch 3 — client directory): marks a single
+//   field per space as the "client" dimension to aggregate by. Values are
+//   auto-assigned by seedDefaultFieldsForSpace from preset metadata; users
+//   can change which field is the identifier via the field manager in Batch
+//   3. Until Batch 3 ships, the column exists but drives no UI.
+// ───────────────────────────────────────────────────────────────────────────
+function initFoundationColumns() {
+  ensureColumn('custom_field_definitions', 'encrypted', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('custom_field_definitions', 'is_client_identifier', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 function ensureColumn(table, column, def) {

@@ -73,7 +73,22 @@ const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
+
+// Closed vocabulary of activity_log.action values — see activity-actions.json.
+// Loaded once at module init; validated lazily so new features can't ship a
+// logActivity call with an unknown action without being noticed. The same
+// JSON file is also pushed into client-src/src/ on deploy so the frontend
+// Timeline reads an identical classification.
+const ACTIVITY_ACTIONS = require('../activity-actions.json');
+
 function logActivity(taskId, userId, action, details) {
+  if (!Object.prototype.hasOwnProperty.call(ACTIVITY_ACTIONS, action)) {
+    // Fail-open in prod (don't break the surrounding write), fail-loud in
+    // dev so whoever added the new action notices immediately.
+    const msg = `[activity-actions] unknown action "${action}" — add it to activity-actions.json`;
+    if (process.env.NODE_ENV === 'production') console.warn(msg);
+    else throw new Error(msg);
+  }
   const db = getDb();
   db.prepare('INSERT INTO activity_log (task_id, user_id, action, details) VALUES (?, ?, ?, ?)').run(taskId, userId, action, details);
 }
@@ -109,8 +124,8 @@ function seedDefaultFieldsForSpace(userId, spaceId, presetId) {
   const existingKeys = new Set(existing.map(r => r.field_key));
   const insert = db.prepare(`
     INSERT INTO custom_field_definitions
-      (user_id, space_id, field_key, label, type, options, sort_order, show_in_list, show_in_create)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (user_id, space_id, field_key, label, type, options, sort_order, show_in_list, show_in_create, is_client_identifier)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   preset.default_fields.forEach((f, i) => {
     if (existingKeys.has(f.key)) return;
@@ -118,7 +133,8 @@ function seedDefaultFieldsForSpace(userId, spaceId, presetId) {
     // Heuristic: first two fields peek in list view and show on create modal.
     const showInList = i < 2 ? 1 : 0;
     const showInCreate = i < 2 ? 1 : 0;
-    insert.run(userId, spaceId, f.key, f.label, f.type, optsJson, i, showInList, showInCreate);
+    const isClientId = f.client_identifier ? 1 : 0;
+    insert.run(userId, spaceId, f.key, f.label, f.type, optsJson, i, showInList, showInCreate, isClientId);
   });
 }
 

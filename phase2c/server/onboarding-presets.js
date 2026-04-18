@@ -22,7 +22,7 @@ const PRESETS = [
     description: 'Cases, clients, court dates, matters.',
     default_fields: [
       { key: 'case_reference', label: 'Case reference', type: 'text' },
-      { key: 'client_name',    label: 'Client name',    type: 'text' },
+      { key: 'client_name',    label: 'Client name',    type: 'text', client_identifier: true },
       {
         key: 'matter_type',    label: 'Matter type',    type: 'dropdown',
         options: ['Litigation', 'Corporate', 'Family', 'Property', 'Criminal', 'Immigration', 'Other'],
@@ -43,7 +43,7 @@ const PRESETS = [
     color: '#10B981', // green
     description: 'Patients, appointments, and clinical workflow.',
     default_fields: [
-      { key: 'patient_identifier', label: 'Patient identifier', type: 'text' },
+      { key: 'patient_identifier', label: 'Patient identifier', type: 'text', client_identifier: true },
       { key: 'presenting_complaint', label: 'Presenting complaint', type: 'text' },
       {
         key: 'specialty', label: 'Specialty area', type: 'dropdown',
@@ -82,7 +82,7 @@ const PRESETS = [
         options: ['Low', 'Medium', 'High', 'Critical'],
       },
       { key: 'lead_engineer', label: 'Lead engineer', type: 'text' },
-      { key: 'stakeholder', label: 'Client/stakeholder', type: 'text' },
+      { key: 'stakeholder', label: 'Client/stakeholder', type: 'text', client_identifier: true },
       { key: 'target_completion', label: 'Target completion', type: 'date' },
     ],
   },
@@ -98,7 +98,7 @@ const PRESETS = [
         options: ['Tutoring', 'Primary school', 'Secondary school', 'College', 'University', 'Other'],
       },
       { key: 'subject', label: 'Subject', type: 'text' },
-      { key: 'student_or_class', label: 'Student/class name', type: 'text' },
+      { key: 'student_or_class', label: 'Student/class name', type: 'text', client_identifier: true },
       { key: 'level', label: 'Level/year group', type: 'text' },
       { key: 'next_session', label: 'Next session', type: 'date' },
       {
@@ -115,7 +115,7 @@ const PRESETS = [
     color: '#14B8A6', // teal
     description: 'Clients, projects, and invoicing.',
     default_fields: [
-      { key: 'client_name', label: 'Client name', type: 'text' },
+      { key: 'client_name', label: 'Client name', type: 'text', client_identifier: true },
       { key: 'project_type', label: 'Project type', type: 'text' },
       {
         key: 'engagement_model', label: 'Engagement model', type: 'dropdown',
@@ -142,7 +142,7 @@ const PRESETS = [
         options: ['Dog', 'Cat', 'Horse', 'Bird', 'Fish', 'Plant', 'Other'],
       },
       { key: 'line', label: 'Line/lineage', type: 'text' },
-      { key: 'identifier', label: 'Identifier', type: 'text' },
+      { key: 'identifier', label: 'Identifier', type: 'text', client_identifier: true },
       { key: 'parent_a', label: 'Parent A', type: 'text' },
       { key: 'parent_b', label: 'Parent B', type: 'text' },
       { key: 'birth_date', label: 'Birth/germination date', type: 'date' },

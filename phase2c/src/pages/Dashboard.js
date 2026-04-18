@@ -12,6 +12,7 @@ import FieldManager from '../components/FieldManager';
 import CustomFieldInput from '../components/CustomFieldInput';
 import SpaceIcon from '../components/SpaceIcon';
 import DocumentViewer, { detectKind as detectFileKind } from '../components/DocumentViewer';
+import ACTIVITY_ACTIONS from '../activity-actions.json';
 
 // ─── Status / priority / tag colour constants (unchanged from Phase 2B) ───
 
@@ -841,25 +842,19 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
           // Sources merged: activity_log, task_notes (full content), task_files
           // (upload events), time_entries (stop events with duration). All tagged
           // with a `kind` so the renderer can pick an icon + style.
-          const SIGNAL_ACTIONS = new Set([
-            'created', 'status_changed', 'archived', 'unarchived', 'moved',
-            'file_uploaded', 'file_deleted', 'note_added',
-            'time_started', 'time_stopped',
-            'dependency_added', 'dependency_removed',
-            'tagged', 'untagged',
-            'deleted', 'undeleted', 'subtask_completed',
-          ]);
-          const EDIT_ACTIONS = new Set([
-            'edited', 'pinned', 'unpinned',
-            'subtask_added', 'subtask_uncompleted', 'subtask_removed',
-          ]);
+          //
+          // Classification is read from the shared activity-actions.json file,
+          // which the backend also consults. Unknown actions (not in the JSON)
+          // are hidden from the Timeline entirely — adding a new logActivity
+          // call in a future feature requires adding it to the JSON first or
+          // it won't show up here.
           const merged = [];
           for (const a of activity) {
-            const isSignal = SIGNAL_ACTIONS.has(a.action);
-            const isEdit = EDIT_ACTIONS.has(a.action);
-            if (!isSignal && !isEdit) continue; // unknown actions hidden either way
+            const entry = ACTIVITY_ACTIONS[a.action];
+            if (!entry) continue; // unknown action — skip
+            const kind = entry.kind; // 'signal' | 'edit'
             merged.push({
-              id: 'a' + a.id, at: a.created_at, kind: isSignal ? 'signal' : 'edit',
+              id: 'a' + a.id, at: a.created_at, kind,
               action: a.action, text: a.details,
             });
           }
