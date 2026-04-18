@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import PdfViewer from './viewers/PdfViewer';
 import ImageViewer from './viewers/ImageViewer';
 import TextViewer from './viewers/TextViewer';
@@ -63,7 +63,6 @@ export default function DocumentViewer({ files, initialIndex = 0, onClose }) {
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const rootRef = useRef(null);
 
   const file = files && files.length > 0 ? files[index] : null;
   const kind = detectKind(file);
@@ -122,7 +121,7 @@ export default function DocumentViewer({ files, initialIndex = 0, onClose }) {
   const downloadUrl = `/uploads/${file.filename}`;
 
   return (
-    <div className={`dv-overlay${fullscreen ? ' dv-overlay--fs' : ''}`} ref={rootRef}>
+    <div className={`dv-overlay${fullscreen ? ' dv-overlay--fs' : ''}`}>
       {/* Top bar — always visible even in fullscreen so the user can escape. */}
       <div className="dv-topbar">
         <button

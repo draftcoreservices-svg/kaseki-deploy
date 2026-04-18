@@ -25,7 +25,7 @@ export default function ImageViewer({ url, alt }) {
     setError(false);
   }, [url]);
 
-  const zoomBy = (factor, centerX, centerY) => {
+  const zoomBy = (factor) => {
     setZoom(z => {
       const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z * factor));
       // If zoom is back to 1 the pan should recentre.
@@ -39,7 +39,7 @@ export default function ImageViewer({ url, alt }) {
     // it. Positive deltaY = wheel down = zoom out.
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    zoomBy(factor, e.clientX, e.clientY);
+    zoomBy(factor);
   };
 
   const onMouseDown = (e) => {
@@ -89,7 +89,6 @@ export default function ImageViewer({ url, alt }) {
         onMouseLeave={onMouseUp}
         onDoubleClick={onDoubleClick}
       >
-        {/* eslint-disable-next-line jsx-a11y/alt-text */}
         <img
           src={url}
           alt={alt || ''}
