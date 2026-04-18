@@ -408,9 +408,19 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
     catch (e) { toast.show({ message: e.message, type: 'error' }); }
   };
   const uploadFile = async (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    try { await api.uploadFile(task.id, f); load(); toast.show({ message: 'File uploaded', type: 'success' }); }
-    catch (er) { toast.show({ message: er.message, type: 'error' }); }
+    const fileList = Array.from(e.target.files || []);
+    if (fileList.length === 0) return;
+    // Clear the input so selecting the same file(s) again still fires onChange.
+    e.target.value = '';
+    try {
+      const res = await api.uploadFiles(task.id, fileList);
+      load();
+      const n = (res.files || []).length || fileList.length;
+      toast.show({
+        message: n === 1 ? 'File uploaded' : `${n} files uploaded`,
+        type: 'success',
+      });
+    } catch (er) { toast.show({ message: er.message, type: 'error' }); }
   };
   const delFile = async (f) => {
     try { await api.deleteFile(f.id); load(); toast.show({ message: `File deleted: ${f.original_name}`, type: 'info' }); }
@@ -496,8 +506,8 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
           <div className="dash-note-list">{notes.map(n=><div key={n.id} className="dash-note-item"><p>{n.content}</p><span className="dash-note-time">{fmtDateTime(n.created_at)}</span></div>)}{notes.length===0&&<div className="dash-empty-small">No notes yet</div>}</div>
         </>}
         {tab==='files'&&<>
-          <button className="dash-file-upload-btn" onClick={()=>fileRef.current?.click()}>📎 Upload File</button>
-          <input ref={fileRef} type="file" style={{display:'none'}} onChange={uploadFile}/>
+          <button className="dash-file-upload-btn" onClick={()=>fileRef.current?.click()}>📎 Upload Files</button>
+          <input ref={fileRef} type="file" multiple style={{display:'none'}} onChange={uploadFile}/>
           <div className="dash-file-list">
             {files.map((f, i) => {
               const kind = detectFileKind(f);

@@ -744,6 +744,40 @@ router.post('/tasks/:id/files', authenticate, upload.single('file'), (req, res) 
   res.json({ file });
 });
 
+// Batch upload — up to 20 files in one request, inserts atomically.
+// Frontend uses this for multi-file pickers and (eventually) drag-drop.
+router.post('/tasks/:id/files/batch', authenticate, upload.array('files', 20), (req, res) => {
+  const taskId = parseInt(req.params.id);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
+
+  const insert = db.prepare('INSERT INTO task_files (task_id, filename, original_name, mime_type, size) VALUES (?, ?, ?, ?, ?)');
+  const selectById = db.prepare('SELECT * FROM task_files WHERE id = ?');
+
+  const insertAll = db.transaction((incoming) => {
+    const created = [];
+    for (const f of incoming) {
+      const r = insert.run(taskId, f.filename, f.originalname, f.mimetype, f.size);
+      created.push(selectById.get(r.lastInsertRowid));
+    }
+    return created;
+  });
+
+  const files = insertAll(req.files);
+  // One activity log entry summarising the batch rather than N rows.
+  logActivity(
+    taskId,
+    req.user.id,
+    'files_uploaded',
+    files.length === 1
+      ? 'File uploaded: ' + files[0].original_name
+      : files.length + ' files uploaded: ' + files.map(f => f.original_name).join(', ')
+  );
+  res.json({ files });
+});
+
 router.delete('/files/:id', authenticate, (req, res) => {
   const id = parseInt(req.params.id);
   const db = getDb();

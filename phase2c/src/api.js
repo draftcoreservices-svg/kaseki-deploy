@@ -84,6 +84,11 @@ const api = {
     fd.append('file', file);
     return request(`/tasks/${taskId}/files`, { method: 'POST', body: fd });
   },
+  uploadFiles: (taskId, fileList) => {
+    const fd = new FormData();
+    for (const f of fileList) fd.append('files', f);
+    return request(`/tasks/${taskId}/files/batch`, { method: 'POST', body: fd });
+  },
   deleteFile: (id) => request(`/files/${id}`, { method: 'DELETE' }),
 
   // ── Activity ────────────────────────────────────────────────────────────
