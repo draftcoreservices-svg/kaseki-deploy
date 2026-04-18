@@ -1475,16 +1475,16 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
         </div>
       </div>
 
+      {viewMode === 'list' && clientFilter && (
+        <div className="dash-client-banner">
+          <span className="dash-client-banner-label">
+            Showing tasks for <strong>{clientFilter}</strong>
+          </span>
+          <button className="dash-client-banner-clear" onClick={() => setClientFilter(null)} title="Clear filter">✕ Clear</button>
+        </div>
+      )}
       {viewMode === 'list' && (
         <div className="dash-body">
-          {clientFilter && (
-            <div className="dash-client-banner">
-              <span className="dash-client-banner-label">
-                Showing tasks for <strong>{clientFilter}</strong>
-              </span>
-              <button className="dash-client-banner-clear" onClick={() => setClientFilter(null)} title="Clear filter">✕ Clear</button>
-            </div>
-          )}
           <div className="dash-sidebar">
             <div className="dash-sidebar-header">
               <span className="dash-sidebar-title">{showArch?'Archived':'Tasks'}</span>

@@ -2899,12 +2899,11 @@ select option:hover {
 
 /* ── Client filter banner in list view ──────────────────────────────── */
 .dash-client-banner {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  margin-bottom: 10px;
+  margin: 0 16px 10px;
   background: color-mix(in oklab, var(--space-accent, #3b82f6) 12%, transparent);
   border: 1px solid color-mix(in oklab, var(--space-accent, #3b82f6) 40%, transparent);
   border-radius: 8px;
@@ -3095,4 +3094,15 @@ select option:hover {
 .countdown-days--overdue {
   background: rgba(248, 113, 113, 0.18);
   color: #fca5a5;
+}
+
+/* Pending Quick Access cards — dimmed with tooltip-friendly visibility.
+   Phase C Batch 3 patch — earlier we used `disabled` which hid the tooltip,
+   switched to aria-disabled + this class so hover still reveals the title. */
+.landing-p2c-qa-card--pending {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.landing-p2c-qa-card--pending:hover {
+  opacity: 0.7;
 }

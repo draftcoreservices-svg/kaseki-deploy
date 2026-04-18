@@ -224,7 +224,10 @@ export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace,
           <div className="landing-p2c-quick-access">
             {MODULE_CARDS.map(card => {
               // Phase C Batch 3 — only `countdown` is wired so far. Other
-              // cards still show "Coming in a future phase" tooltip.
+              // cards remain dimmed with a "Coming in a future phase"
+              // tooltip. We deliberately do NOT use `disabled` on the button
+              // because browsers hide `title` tooltips on disabled elements,
+              // and we want the tooltip to show.
               const handlers = {
                 countdown: () => setCountdownOpen(true),
               };
@@ -232,11 +235,10 @@ export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace,
               return (
                 <button
                   key={card.id}
-                  className="landing-p2c-qa-card"
+                  className={`landing-p2c-qa-card${handler ? '' : ' landing-p2c-qa-card--pending'}`}
                   onClick={handler || (() => {})}
                   title={handler ? card.name : 'Coming in a future phase'}
-                  disabled={!handler}
-                  style={handler ? {} : { opacity: 0.6 }}
+                  aria-disabled={!handler}
                 >
                   <span className="landing-p2c-qa-icon">{card.icon}</span>
                   <div className="landing-p2c-qa-info">
