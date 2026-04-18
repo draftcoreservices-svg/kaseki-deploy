@@ -12,7 +12,7 @@ import FieldManager from '../components/FieldManager';
 import CustomFieldInput from '../components/CustomFieldInput';
 import SpaceIcon from '../components/SpaceIcon';
 import DocumentViewer, { detectKind as detectFileKind } from '../components/DocumentViewer';
-import ACTIVITY_ACTIONS from '../activity-actions.json';
+import ACTIVITY_ACTIONS from '../activity-actions';
 
 // ─── Status / priority / tag colour constants (unchanged from Phase 2B) ───
 

@@ -111,15 +111,18 @@ pct push $CT "$WORK/phase2c/src/components/LegalModal.js"        /opt/kaseki/src
 pct push $CT "$WORK/phase2c/src/legal-documents.js"              /opt/kaseki/src/client-src/src/legal-documents.js
 echo "  done"
 
-# ── Foundation additions (EventContext + shared activity-actions.json) ───
+# ── Foundation additions (EventContext + shared activity-actions.js) ───
 pct push $CT "$WORK/phase2c/src/components/EventContext.js"      /opt/kaseki/src/client-src/src/components/EventContext.js
-# The activity-actions.json file is required by BOTH server and client.
-# Source of truth is phase2c/server/activity-actions.json so it lives inside
-# the server/ directory that the Dockerfile COPYs into the image.
-# Server target: /opt/kaseki/src/server/activity-actions.json  (require('./activity-actions.json') from routes.js)
-# Client target: /opt/kaseki/src/client-src/src/activity-actions.json (import from pages/Dashboard.js)
-pct push $CT "$WORK/phase2c/server/activity-actions.json"        /opt/kaseki/src/server/activity-actions.json
-pct push $CT "$WORK/phase2c/server/activity-actions.json"        /opt/kaseki/src/client-src/src/activity-actions.json
+# The activity-actions.js module is used by BOTH server and client.
+# Was JSON originally, but the Dockerfile's `COPY server/*.js ./server/` glob
+# filters JSON out, so the backend never saw it inside the container. As a
+# .js CommonJS module (module.exports = {...}) it rides along with the other
+# server files and CRA's webpack handles the default import fine.
+# Source of truth: phase2c/server/activity-actions.js
+# Server target: /opt/kaseki/src/server/activity-actions.js (rides the *.js COPY glob)
+# Client target: /opt/kaseki/src/client-src/src/activity-actions.js (imported from Dashboard.js)
+pct push $CT "$WORK/phase2c/server/activity-actions.js"          /opt/kaseki/src/server/activity-actions.js
+pct push $CT "$WORK/phase2c/server/activity-actions.js"          /opt/kaseki/src/client-src/src/activity-actions.js
 
 # ── 5. Append CSS ─────────────────────────────────────────────────────
 echo ""
