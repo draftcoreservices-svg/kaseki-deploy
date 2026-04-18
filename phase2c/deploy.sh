@@ -105,6 +105,10 @@ pct push $CT "$WORK/phase2c/src/pages/CreateSpaceModal.js"       /opt/kaseki/src
 pct push $CT "$WORK/phase2c/src/pages/HoldingScreen.js"          /opt/kaseki/src/client-src/src/pages/HoldingScreen.js
 pct push $CT "$WORK/phase2c/src/pages/Dashboard.js"              /opt/kaseki/src/client-src/src/pages/Dashboard.js
 pct push $CT "$WORK/phase2c/src/pages/LandingPage.js"            /opt/kaseki/src/client-src/src/pages/LandingPage.js
+
+# ── Phase C Batch 2 additions (legal footer + modal) ───
+pct push $CT "$WORK/phase2c/src/components/LegalModal.js"        /opt/kaseki/src/client-src/src/components/LegalModal.js
+pct push $CT "$WORK/phase2c/src/legal-documents.js"              /opt/kaseki/src/client-src/src/legal-documents.js
 echo "  done"
 
 # ── 5. Append CSS ─────────────────────────────────────────────────────

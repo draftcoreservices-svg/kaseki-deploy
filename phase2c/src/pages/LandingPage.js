@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import TodayPanel from '../components/TodayPanel';
 import SpaceIcon from '../components/SpaceIcon';
+import LegalModal from '../components/LegalModal';
 
 const MODULE_CARDS = [
   { id: 'quick-notes', icon: '📝', name: 'Quick Notes', desc: 'Persistent scratchpad for ideas & lists' },
@@ -113,6 +114,8 @@ export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace,
   const [spaces, setSpaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [presetsByKey, setPresetsByKey] = useState({});
+  // Which legal document modal is currently open, or null for none.
+  const [legalDoc, setLegalDoc] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -238,10 +241,20 @@ export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace,
         <div>
           Kaseki v2.1.0 · Press <kbd>/</kbd> to search, <kbd>Shift+N</kbd> to capture, <kbd>?</kbd> for shortcuts
         </div>
+        <div className="landing-p2c-footer-legal">
+          <span className="landing-p2c-footer-signature">Self-hosted · No tracking · No third-party access</span>
+          <span className="landing-p2c-footer-sep">·</span>
+          <button className="landing-p2c-footer-link" onClick={() => setLegalDoc('terms')}>Terms</button>
+          <span className="landing-p2c-footer-sep">·</span>
+          <button className="landing-p2c-footer-link" onClick={() => setLegalDoc('privacy')}>Privacy</button>
+          <span className="landing-p2c-footer-sep">·</span>
+          <button className="landing-p2c-footer-link" onClick={() => setLegalDoc('acceptable-use')}>Acceptable Use</button>
+        </div>
         <div>
           <span>{formatDate(now)} · {formatTime(now)}</span>
         </div>
       </div>
+      <LegalModal docId={legalDoc} onClose={() => setLegalDoc(null)} />
     </div>
   );
 }
