@@ -102,15 +102,30 @@ echo ""
 echo "[5/8] Appending Phase 2C CSS to index.css…"
 pct push $CT "$WORK/phase2c/src/phase2c.css" /tmp/phase2c.css
 pct exec $CT -- bash -c "
+  # Strip any previous Phase 2C CSS block (between the start and end markers)
+  # and then re-append the current phase2c.css fresh. This is idempotent AND
+  # always reflects the current sandbox contents — earlier deploys used an
+  # append-only check that left stale rules in place when phase2c.css grew.
   if grep -q 'Phase 2C CSS additions marker' /opt/kaseki/src/client-src/src/index.css 2>/dev/null; then
-    echo '  already present, skipping'
-  else
-    echo '' >> /opt/kaseki/src/client-src/src/index.css
-    echo '/* === Phase 2C CSS additions marker === */' >> /opt/kaseki/src/client-src/src/index.css
-    cat /tmp/phase2c.css >> /opt/kaseki/src/client-src/src/index.css
-    echo '/* === Phase 2C CSS additions marker end === */' >> /opt/kaseki/src/client-src/src/index.css
-    echo '  appended'
+    echo '  existing Phase 2C block found — stripping and replacing'
+    # Use awk to keep only lines OUTSIDE the marker block.
+    awk '
+      /Phase 2C CSS additions marker end/ { skip = 0; next }
+      /Phase 2C CSS additions marker/     { skip = 1 }
+      !skip { print }
+    ' /opt/kaseki/src/client-src/src/index.css > /tmp/index.css.stripped
+    mv /tmp/index.css.stripped /opt/kaseki/src/client-src/src/index.css
+    # Verify strip worked — if markers remain, abort so we do not double-append.
+    if grep -q 'Phase 2C CSS additions marker' /opt/kaseki/src/client-src/src/index.css; then
+      echo '  ERROR: marker strip failed, aborting CSS step'
+      exit 2
+    fi
   fi
+  echo '' >> /opt/kaseki/src/client-src/src/index.css
+  echo '/* === Phase 2C CSS additions marker === */' >> /opt/kaseki/src/client-src/src/index.css
+  cat /tmp/phase2c.css >> /opt/kaseki/src/client-src/src/index.css
+  echo '/* === Phase 2C CSS additions marker end === */' >> /opt/kaseki/src/client-src/src/index.css
+  echo '  Phase 2C CSS block written freshly'
   rm -f /tmp/phase2c.css
 " || fail "CSS append failed"
 
