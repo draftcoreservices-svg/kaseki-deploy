@@ -76,10 +76,25 @@ pct push $CT "$WORK/phase2c/src/components/SpaceIcon.js"         /opt/kaseki/src
 pct push $CT "$WORK/phase2c/src/components/IconPicker.js"        /opt/kaseki/src/client-src/src/components/IconPicker.js
 pct push $CT "$WORK/phase2c/src/components/ColorPicker.js"       /opt/kaseki/src/client-src/src/components/ColorPicker.js
 
+# ── Deploy 1b additions ───
+pct push $CT "$WORK/phase2c/src/components/GlobalSearch.js"      /opt/kaseki/src/client-src/src/components/GlobalSearch.js
+pct push $CT "$WORK/phase2c/src/components/QuickCapture.js"      /opt/kaseki/src/client-src/src/components/QuickCapture.js
+pct push $CT "$WORK/phase2c/src/components/TodayPanel.js"        /opt/kaseki/src/client-src/src/components/TodayPanel.js
+pct push $CT "$WORK/phase2c/src/components/ViewSwitcher.js"      /opt/kaseki/src/client-src/src/components/ViewSwitcher.js
+pct push $CT "$WORK/phase2c/src/components/SavedViewsMenu.js"    /opt/kaseki/src/client-src/src/components/SavedViewsMenu.js
+pct push $CT "$WORK/phase2c/src/components/KanbanView.js"        /opt/kaseki/src/client-src/src/components/KanbanView.js
+pct push $CT "$WORK/phase2c/src/components/MatrixView.js"        /opt/kaseki/src/client-src/src/components/MatrixView.js
+pct push $CT "$WORK/phase2c/src/components/CalendarView.js"      /opt/kaseki/src/client-src/src/components/CalendarView.js
+pct push $CT "$WORK/phase2c/src/components/TemplateManager.js"   /opt/kaseki/src/client-src/src/components/TemplateManager.js
+pct push $CT "$WORK/phase2c/src/components/PomodoroPage.js"      /opt/kaseki/src/client-src/src/components/PomodoroPage.js
+pct push $CT "$WORK/phase2c/src/components/ShortcutHelp.js"      /opt/kaseki/src/client-src/src/components/ShortcutHelp.js
+
 pct push $CT "$WORK/phase2c/src/pages/OnboardingWizard.js"       /opt/kaseki/src/client-src/src/pages/OnboardingWizard.js
 pct push $CT "$WORK/phase2c/src/pages/SettingsPage.js"           /opt/kaseki/src/client-src/src/pages/SettingsPage.js
 pct push $CT "$WORK/phase2c/src/pages/CreateSpaceModal.js"       /opt/kaseki/src/client-src/src/pages/CreateSpaceModal.js
 pct push $CT "$WORK/phase2c/src/pages/HoldingScreen.js"          /opt/kaseki/src/client-src/src/pages/HoldingScreen.js
+pct push $CT "$WORK/phase2c/src/pages/Dashboard.js"              /opt/kaseki/src/client-src/src/pages/Dashboard.js
+pct push $CT "$WORK/phase2c/src/pages/LandingPage.js"            /opt/kaseki/src/client-src/src/pages/LandingPage.js
 echo "  done"
 
 # ── 5. Append CSS ─────────────────────────────────────────────────────

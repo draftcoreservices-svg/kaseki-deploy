@@ -3,29 +3,27 @@ import api from './api';
 import AuthPage from './pages/AuthPage';
 import OnboardingWizard from './pages/OnboardingWizard';
 import SettingsPage from './pages/SettingsPage';
-import HoldingScreen from './pages/HoldingScreen';
+import LandingPage from './pages/LandingPage';
+import Dashboard from './pages/Dashboard';
+import PomodoroPage from './components/PomodoroPage';
+import GlobalSearch from './components/GlobalSearch';
+import QuickCapture from './components/QuickCapture';
+import ShortcutHelp from './components/ShortcutHelp';
 import { ToastProvider } from './components/ToastContext';
-
-// Phase 2C Deploy 1a.
-//
-// The dashboard, landing page, global search, quick capture, and pomodoro
-// routing are temporarily suspended — they depend on space_id support in the
-// frontend that ships in Deploy 1b. In their place users see the onboarding
-// wizard (first run) then a holding screen that explains the situation and
-// offers access to settings.
-//
-// All pre-existing tasks, todos, events, notes, tags, saved views, and
-// templates have been wiped by the db.js migration. This is expected and
-// agreed: the user asked for fresh-start.
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [theme, setTheme] = useState('dark');
-  const [onboardingComplete, setOnboardingComplete] = useState(null); // null = unknown yet
-  const [view, setView] = useState('holding'); // 'holding' | 'settings'
+  const [onboardingComplete, setOnboardingComplete] = useState(null);
+  const [view, setView] = useState('landing'); // 'landing' | 'dashboard' | 'settings' | 'pomodoro'
+  const [activeSpace, setActiveSpace] = useState(null);
+  const [pendingOpenTask, setPendingOpenTask] = useState(null);
 
-  // Load user + theme + onboarding status.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -60,34 +58,84 @@ export default function App() {
 
   const handleLogin = useCallback(async (userData) => {
     setUser(userData);
-    // Refresh onboarding status for this user.
     try {
       const status = await api.getOnboardingStatus();
       setOnboardingComplete(!!status.complete);
     } catch {
       setOnboardingComplete(false);
     }
-    setView('holding');
+    setView('landing');
+    setActiveSpace(null);
   }, []);
 
   const handleLogout = useCallback(async () => {
     await api.logout().catch(() => {});
     setUser(null);
     setOnboardingComplete(null);
-    setView('holding');
+    setActiveSpace(null);
+    setView('landing');
   }, []);
 
   const handleOnboardingComplete = useCallback(() => {
     setOnboardingComplete(true);
-    setView('holding');
+    setView('landing');
   }, []);
 
   const handleRestartOnboarding = useCallback(() => {
     setOnboardingComplete(false);
-    setView('holding'); // wizard takes over because onboardingComplete is false
+    setView('landing');
   }, []);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const openSpace = useCallback((space) => {
+    setActiveSpace(space);
+    setView('dashboard');
+    api.savePreferences({ last_active_space_id: space.id }).catch(() => {});
+  }, []);
+
+  const backToLanding = useCallback(() => {
+    setView('landing');
+    setActiveSpace(null);
+  }, []);
+
+  const openPomodoro = useCallback(() => setView('pomodoro'), []);
+
+  useEffect(() => {
+    if (!user || !onboardingComplete) return;
+    const isTyping = (e) => {
+      const el = e.target;
+      if (!el) return false;
+      const tag = (el.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (el.isContentEditable) return true;
+      return false;
+    };
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+        return;
+      }
+      if (isTyping(e)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      if (e.key === '/') {
+        e.preventDefault();
+        setSearchOpen(true);
+      } else if (e.key === 'N' && e.shiftKey) {
+        e.preventDefault();
+        setQuickCaptureOpen(true);
+      } else if (e.key === '?') {
+        e.preventDefault();
+        setHelpOpen(true);
+      } else if (e.key === 'Escape') {
+        if (searchOpen) setSearchOpen(false);
+        else if (quickCaptureOpen) setQuickCaptureOpen(false);
+        else if (helpOpen) setHelpOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [user, onboardingComplete, searchOpen, quickCaptureOpen, helpOpen]);
 
   if (loading || (user && onboardingComplete === null)) {
     return (
@@ -105,7 +153,6 @@ export default function App() {
     );
   }
 
-  // First-run: forced wizard.
   if (!onboardingComplete) {
     return (
       <ToastProvider>
@@ -119,26 +166,60 @@ export default function App() {
     );
   }
 
-  // Post-onboarding: holding screen (or settings).
   return (
     <ToastProvider>
-      {view === 'settings' ? (
+      {view === 'settings' && (
         <SettingsPage
           user={user}
           theme={theme}
           onToggleTheme={toggleTheme}
-          onBack={() => setView('holding')}
+          onBack={backToLanding}
           onRestartOnboarding={handleRestartOnboarding}
         />
-      ) : (
-        <HoldingScreen
+      )}
+      {view === 'pomodoro' && (
+        <PomodoroPage
+          onBack={activeSpace ? () => setView('dashboard') : backToLanding}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
+      )}
+      {view === 'dashboard' && activeSpace && (
+        <Dashboard
+          space={activeSpace}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onBack={backToLanding}
+          pendingOpenTask={pendingOpenTask}
+          onPendingHandled={() => setPendingOpenTask(null)}
+          onOpenPomodoro={openPomodoro}
+        />
+      )}
+      {view === 'landing' && (
+        <LandingPage
           user={user}
           theme={theme}
           onToggleTheme={toggleTheme}
-          onOpenSettings={() => setView('settings')}
+          onSelectSpace={openSpace}
           onLogout={handleLogout}
+          onOpenPomodoro={openPomodoro}
+          onOpenSettings={() => setView('settings')}
         />
       )}
+
+      <GlobalSearch
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onOpenTask={(id) => setPendingOpenTask(id)}
+        onNavigateSpace={(space) => { openSpace(space); }}
+      />
+      <QuickCapture
+        open={quickCaptureOpen}
+        onClose={() => setQuickCaptureOpen(false)}
+        onOpenSettings={() => setView('settings')}
+        onCaptured={() => {}}
+      />
+      <ShortcutHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
     </ToastProvider>
   );
 }
