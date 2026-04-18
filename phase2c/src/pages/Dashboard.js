@@ -674,6 +674,24 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
                       >
                         <img src={`/uploads/${f.filename}`} alt={f.original_name} loading="lazy" />
                         <span className="dash-file-gallery-caption">{f.original_name}</span>
+                        {/* Hover-revealed actions. stopPropagation prevents
+                            the parent button from firing setViewerIdx when
+                            the user clicks an action. */}
+                        <a
+                          className="dash-file-gallery-action dash-file-gallery-action--dl"
+                          href={`/uploads/${f.filename}`}
+                          download={f.original_name}
+                          title="Download"
+                          onClick={(e) => e.stopPropagation()}
+                        >⬇</a>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          className="dash-file-gallery-action dash-file-gallery-action--del"
+                          title="Delete"
+                          onClick={(e) => { e.stopPropagation(); delFile(f); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); delFile(f); } }}
+                        >✕</span>
                       </button>
                     ))}
                   </div>

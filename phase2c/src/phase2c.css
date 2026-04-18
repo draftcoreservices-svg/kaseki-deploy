@@ -2593,3 +2593,44 @@ select option:hover {
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Gallery hover actions ──────────────────────────────────────────── */
+.dash-file-gallery-item {
+  position: relative;
+}
+.dash-file-gallery-action {
+  position: absolute;
+  top: 6px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease, background 0.1s;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  user-select: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.dash-file-gallery-action--dl { left: 6px; }
+.dash-file-gallery-action--del { right: 6px; }
+.dash-file-gallery-item:hover .dash-file-gallery-action,
+.dash-file-gallery-item:focus-visible .dash-file-gallery-action,
+.dash-file-gallery-action:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.dash-file-gallery-action--dl:hover {
+  background: rgba(59, 158, 255, 0.85);
+}
+.dash-file-gallery-action--del:hover {
+  background: rgba(239, 68, 68, 0.9);
+}
