@@ -438,7 +438,26 @@ router.get('/tasks', authenticate, (req, res) => {
       AND t.status != 'done' AND t.deleted_at IS NULL
   `).all(req.user.id, space.id);
   const blocked = new Set(blockedRows.map(r => r.task_id));
-  const decorated = attachTagsToTasks(filterDeleted(tasks)).map(t => ({ ...t, blocked: blocked.has(t.id) }));
+  // Phase C Batch 3 — attach custom field values as { field_id → value } per
+  // task so client-side filtering (Clients tab) and future features (kanban
+  // colouring by field, etc.) have the data without a second round trip.
+  // Single grouped query rather than N+1.
+  const fieldValsByTask = {};
+  const filteredKept = filterDeleted(tasks);
+  const keptIds = filteredKept.map(t => t.id);
+  if (keptIds.length > 0) {
+    const placeholders = keptIds.map(() => '?').join(',');
+    const rows = db.prepare(`SELECT task_id, field_id, value FROM custom_field_values WHERE task_id IN (${placeholders})`).all(...keptIds);
+    for (const r of rows) {
+      if (!fieldValsByTask[r.task_id]) fieldValsByTask[r.task_id] = {};
+      fieldValsByTask[r.task_id][r.field_id] = r.value;
+    }
+  }
+  const decorated = attachTagsToTasks(filteredKept).map(t => ({
+    ...t,
+    blocked: blocked.has(t.id),
+    custom_fields: fieldValsByTask[t.id] || {},
+  }));
   res.json({ tasks: decorated });
 });
 
@@ -1722,6 +1741,98 @@ router.get('/today-summary', authenticate, (req, res) => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE C BATCH 3 — COUNTDOWN
+// ═══════════════════════════════════════════════════════════════════════════
+// Cross-space list of things with a date in the next 30 days. Merges tasks
+// (by due_date) and events (by date), returns chronologically ascending so
+// the soonest thing is first. Also includes overdue items (past due_date
+// but not yet done) because "three days overdue" is more useful in a
+// countdown view than silence.
+//
+// Return shape: [{ kind: 'task'|'event', id, title, date, time?, space_id,
+// space_name, space_icon, space_color, status? (tasks only), days_away }]
+// where days_away is negative for overdue, 0 for today, positive for future.
+
+router.get('/countdown', authenticate, (req, res) => {
+  const db = getDb();
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const horizon = new Date(now);
+  horizon.setDate(horizon.getDate() + 30);
+  const horizonStr = horizon.toISOString().slice(0, 10);
+
+  // Tasks: due_date in [past-overdue, today .. today+30]. Exclude archived,
+  // soft-deleted, and 'done' tasks. Overdue done tasks would be clutter.
+  const tasks = db.prepare(`
+    SELECT t.id, t.title, t.due_date AS date, t.due_time AS time, t.status,
+           t.space_id, s.name AS space_name, s.icon AS space_icon, s.color AS space_color
+    FROM tasks t
+    JOIN spaces s ON s.id = t.space_id
+    WHERE t.user_id = ?
+      AND t.archived = 0
+      AND t.deleted_at IS NULL
+      AND s.visible = 1
+      AND s.archived = 0
+      AND t.status != 'done'
+      AND t.due_date IS NOT NULL
+      AND t.due_date != ''
+      AND t.due_date <= ?
+    ORDER BY t.due_date ASC, t.due_time ASC
+  `).all(req.user.id, horizonStr);
+
+  // Events: date in [today .. today+30]. Events don't have a "done" concept
+  // and don't become "overdue" the way tasks do — past events are just past
+  // events. So we only look forward here.
+  const events = db.prepare(`
+    SELECT e.id, e.title, e.date, e.time,
+           e.space_id, s.name AS space_name, s.icon AS space_icon, s.color AS space_color
+    FROM events e
+    JOIN spaces s ON s.id = e.space_id
+    WHERE e.user_id = ?
+      AND e.deleted_at IS NULL
+      AND s.visible = 1
+      AND s.archived = 0
+      AND e.date >= ?
+      AND e.date <= ?
+    ORDER BY e.date ASC, e.time ASC
+  `).all(req.user.id, todayStr, horizonStr);
+
+  // Compute days_away server-side so the client doesn't have to worry about
+  // timezone edge cases. String date arithmetic via Date parsing is good
+  // enough for day-granularity.
+  const todayDate = new Date(todayStr + 'T00:00:00Z');
+  const daysAway = (dateStr) => {
+    const d = new Date(dateStr + 'T00:00:00Z');
+    return Math.round((d - todayDate) / (1000 * 60 * 60 * 24));
+  };
+
+  const taskItems = tasks.map(t => ({
+    kind: 'task',
+    id: t.id, title: t.title, date: t.date, time: t.time || null,
+    status: t.status,
+    space_id: t.space_id, space_name: t.space_name, space_icon: t.space_icon, space_color: t.space_color,
+    days_away: daysAway(t.date),
+  }));
+  const eventItems = events.map(e => ({
+    kind: 'event',
+    id: e.id, title: e.title, date: e.date, time: e.time || null,
+    space_id: e.space_id, space_name: e.space_name, space_icon: e.space_icon, space_color: e.space_color,
+    days_away: daysAway(e.date),
+  }));
+
+  const merged = [...taskItems, ...eventItems].sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    // Same-day: items with a time sort by time; events first when both lack times.
+    if (a.time && b.time) return a.time.localeCompare(b.time);
+    if (a.time) return -1;
+    if (b.time) return 1;
+    return a.kind === 'event' ? -1 : 1;
+  });
+
+  res.json({ items: merged });
+});
+
 router.get('/calendar', authenticate, (req, res) => {
   const { start, end } = req.query;
   if (!start || !end) return res.status(400).json({ error: 'start and end required (YYYY-MM-DD)' });
@@ -1949,7 +2060,7 @@ router.put('/spaces/:spaceId/fields/:fieldId', authenticate, (req, res) => {
   const ex = db.prepare('SELECT * FROM custom_field_definitions WHERE id = ? AND user_id = ? AND space_id = ?').get(fieldId, req.user.id, space.id);
   if (!ex) return res.status(404).json({ error: 'Field not found' });
 
-  const { label, options, required, show_in_list, show_in_create } = req.body || {};
+  const { label, options, required, show_in_list, show_in_create, is_client_identifier } = req.body || {};
   const ups = []; const vals = [];
   if (label !== undefined) {
     if (!String(label).trim()) return res.status(400).json({ error: 'Label cannot be empty' });
@@ -1964,6 +2075,17 @@ router.put('/spaces/:spaceId/fields/:fieldId', authenticate, (req, res) => {
   if (required !== undefined)      { ups.push('required = ?');       vals.push(required ? 1 : 0); }
   if (show_in_list !== undefined)  { ups.push('show_in_list = ?');   vals.push(show_in_list ? 1 : 0); }
   if (show_in_create !== undefined){ ups.push('show_in_create = ?'); vals.push(show_in_create ? 1 : 0); }
+  // Phase C Batch 3 — client identifier flag. Only one field per space may be
+  // the identifier. When we set a field to 1, clear it from any other field
+  // in the same space first so the invariant holds. When setting to 0, just
+  // unset this field.
+  if (is_client_identifier !== undefined) {
+    if (is_client_identifier) {
+      db.prepare('UPDATE custom_field_definitions SET is_client_identifier = 0 WHERE user_id = ? AND space_id = ? AND id != ?')
+        .run(req.user.id, space.id, fieldId);
+    }
+    ups.push('is_client_identifier = ?'); vals.push(is_client_identifier ? 1 : 0);
+  }
 
   if (ups.length === 0) return res.json({ field: parseFieldDef(ex) });
   vals.push(fieldId);
@@ -1996,6 +2118,61 @@ router.put('/spaces/:id/fields/reorder', authenticate, (req, res) => {
   });
   tx();
   res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE C BATCH 3 — CLIENT DIRECTORY
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Given a space with an is_client_identifier-flagged custom field, aggregate
+// all distinct values of that field across the space's tasks and return per-
+// client statistics. Drives the Clients tab in the dashboard view.
+//
+// Returns:
+//   {
+//     identifier_field: { id, key, label } | null,  // null if no flag set
+//     clients: [ { value, task_count, active_count, last_activity_at } ]
+//   }
+//
+// Task counts exclude archived and soft-deleted tasks. active_count is tasks
+// whose status is not 'done'. last_activity_at is the max updated_at across
+// the task set for the client (used to sort by recency).
+
+router.get('/spaces/:id/clients', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.params.id);
+  if (!space) return;
+  const db = getDb();
+  const field = db.prepare(`
+    SELECT id, field_key, label
+    FROM custom_field_definitions
+    WHERE user_id = ? AND space_id = ? AND is_client_identifier = 1
+    LIMIT 1
+  `).get(req.user.id, space.id);
+  if (!field) {
+    return res.json({ identifier_field: null, clients: [] });
+  }
+  const rows = db.prepare(`
+    SELECT
+      cfv.value AS value,
+      COUNT(*) AS task_count,
+      SUM(CASE WHEN t.status != 'done' THEN 1 ELSE 0 END) AS active_count,
+      MAX(t.updated_at) AS last_activity_at
+    FROM custom_field_values cfv
+    JOIN tasks t ON t.id = cfv.task_id
+    WHERE cfv.field_id = ?
+      AND t.user_id = ?
+      AND t.space_id = ?
+      AND t.archived = 0
+      AND t.deleted_at IS NULL
+      AND cfv.value IS NOT NULL
+      AND TRIM(cfv.value) != ''
+    GROUP BY cfv.value
+    ORDER BY last_activity_at DESC, value ASC
+  `).all(field.id, req.user.id, space.id);
+  res.json({
+    identifier_field: { id: field.id, key: field.field_key, label: field.label },
+    clients: rows,
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

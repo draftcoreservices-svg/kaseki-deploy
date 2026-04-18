@@ -3,6 +3,7 @@ import api from '../api';
 import TodayPanel from '../components/TodayPanel';
 import SpaceIcon from '../components/SpaceIcon';
 import LegalModal from '../components/LegalModal';
+import CountdownModal from '../components/CountdownModal';
 
 const MODULE_CARDS = [
   { id: 'quick-notes', icon: '📝', name: 'Quick Notes', desc: 'Persistent scratchpad for ideas & lists' },
@@ -109,13 +110,16 @@ function ActivityFeed() {
   );
 }
 
-export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace, onLogout, onOpenPomodoro, onOpenSettings, onOpenHelp }) {
+export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace, onOpenTaskInSpace, onLogout, onOpenPomodoro, onOpenSettings, onOpenHelp }) {
   const now = useTime();
   const [spaces, setSpaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [presetsByKey, setPresetsByKey] = useState({});
   // Which legal document modal is currently open, or null for none.
   const [legalDoc, setLegalDoc] = useState(null);
+  // Phase C Batch 3 — countdown modal open flag. Wired to the Countdown
+  // Timers Quick Access card.
+  const [countdownOpen, setCountdownOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,21 +222,31 @@ export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace,
         <div>
           <div className="landing-p2c-right-title">Quick access</div>
           <div className="landing-p2c-quick-access">
-            {MODULE_CARDS.map(card => (
-              <button
-                key={card.id}
-                className="landing-p2c-qa-card"
-                onClick={() => {}}
-                title="Coming in a future phase"
-              >
-                <span className="landing-p2c-qa-icon">{card.icon}</span>
-                <div className="landing-p2c-qa-info">
-                  <div className="landing-p2c-qa-name">{card.name}</div>
-                  <div className="landing-p2c-qa-desc">{card.desc}</div>
-                </div>
-                <span className="landing-p2c-qa-arrow">›</span>
-              </button>
-            ))}
+            {MODULE_CARDS.map(card => {
+              // Phase C Batch 3 — only `countdown` is wired so far. Other
+              // cards still show "Coming in a future phase" tooltip.
+              const handlers = {
+                countdown: () => setCountdownOpen(true),
+              };
+              const handler = handlers[card.id];
+              return (
+                <button
+                  key={card.id}
+                  className="landing-p2c-qa-card"
+                  onClick={handler || (() => {})}
+                  title={handler ? card.name : 'Coming in a future phase'}
+                  disabled={!handler}
+                  style={handler ? {} : { opacity: 0.6 }}
+                >
+                  <span className="landing-p2c-qa-icon">{card.icon}</span>
+                  <div className="landing-p2c-qa-info">
+                    <div className="landing-p2c-qa-name">{card.name}</div>
+                    <div className="landing-p2c-qa-desc">{card.desc}</div>
+                  </div>
+                  <span className="landing-p2c-qa-arrow">›</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -255,6 +269,11 @@ export default function LandingPage({ user, theme, onToggleTheme, onSelectSpace,
         </div>
       </div>
       <LegalModal docId={legalDoc} onClose={() => setLegalDoc(null)} />
+      <CountdownModal
+        open={countdownOpen}
+        onClose={() => setCountdownOpen(false)}
+        onOpenTask={onOpenTaskInSpace}
+      />
     </div>
   );
 }

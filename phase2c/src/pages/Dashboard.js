@@ -967,6 +967,12 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
   const [fieldMgrOpen, setFieldMgrOpen] = useState(false);
   const [spaceFields, setSpaceFields] = useState([]); // field defs for the space — used by list peek + create modal
   const [taskFieldValues, setTaskFieldValues] = useState({}); // { taskId: { fieldId: value } } cache for list peek
+  // Phase C Batch 3 — client directory state. `clients` is the aggregation
+  // from /spaces/:id/clients. `clientFilter` is the currently-selected client
+  // value that the list view filters by; null means "no filter".
+  const [clients, setClients] = useState([]);
+  const [clientIdField, setClientIdField] = useState(null); // { id, key, label } or null
+  const [clientFilter, setClientFilter] = useState(null);
   const [selDate, setSelDate] = useState(todayStr());
   const [modal, setModal] = useState(null);
   const [ctx, setCtx] = useState(null);
@@ -1008,6 +1014,18 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
     try { const d = await api.getSpaceFields(space.id); setSpaceFields(d.fields || []); }
     catch (e) { setSpaceFields([]); }
   }, [space.id]);
+  // Phase C Batch 3 — clients aggregation. Reloads whenever the space changes
+  // or the task list changes (so counts stay fresh when you complete/archive).
+  const loadClients = useCallback(async () => {
+    try {
+      const d = await api.getClients(space.id);
+      setClientIdField(d.identifier_field || null);
+      setClients(d.clients || []);
+    } catch (e) {
+      setClientIdField(null);
+      setClients([]);
+    }
+  }, [space.id]);
 
   useEffect(() => { loadT(); }, [loadT]);
   useEffect(() => { loadTd(); }, [loadTd]);
@@ -1015,6 +1033,9 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
   useEffect(() => { loadN(); }, [loadN]);
   useEffect(() => { loadTags(); }, [loadTags]);
   useEffect(() => { loadSpaceFields(); }, [loadSpaceFields]);
+  useEffect(() => { loadClients(); }, [loadClients, tasks]);
+  // Reset client filter when space changes so we don't carry a stale value.
+  useEffect(() => { setClientFilter(null); }, [space.id]);
   useEffect(() => { setBulkSel(new Set()); }, [space.id, showArch]);
 
   // Load peek values for all tasks when either tasks or field defs change.
@@ -1079,9 +1100,16 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
         const ids = (t.tags || []).map(x => x.id);
         if (!ids.includes(+fTag)) return false;
       }
+      // Phase C Batch 3 — filter by selected client (identifier field value).
+      // Only applies when both a filter value and a client-id field are set.
+      // t.custom_fields comes from the task list endpoint as { field_id: value }.
+      if (clientFilter && clientIdField) {
+        const val = t.custom_fields && t.custom_fields[clientIdField.id];
+        if (val !== clientFilter) return false;
+      }
       return true;
     });
-  }, [tasks, search, fStatus, fPri, fTag]);
+  }, [tasks, search, fStatus, fPri, fTag, clientFilter, clientIdField]);
 
   const total = tasks.length;
   const doneC = tasks.filter(t => t.status === 'done').length;
@@ -1410,7 +1438,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
         </div>
         <div className="dash-header-stats"><div className="dash-stat"><span className="dash-stat-value">{total}</span><span className="dash-stat-label">Tasks</span></div><div className="dash-stat"><span className="dash-stat-value">{doneC}</span><span className="dash-stat-label">Done</span></div><div className={`dash-stat${overdueC>0?' dash-stat--danger':''}`}><span className="dash-stat-value">{overdueC}</span><span className="dash-stat-label">Overdue</span></div></div>
         <div className="dash-header-right">
-          <ViewSwitcher value={viewMode} onChange={setViewMode} space={space} />
+          <ViewSwitcher value={viewMode} onChange={setViewMode} space={space} hasClientDirectory={!!clientIdField} />
           <SavedViewsMenu
             space={space}
             currentFilters={{ search, fStatus, fPri, fTag, showArch }}
@@ -1449,6 +1477,14 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
 
       {viewMode === 'list' && (
         <div className="dash-body">
+          {clientFilter && (
+            <div className="dash-client-banner">
+              <span className="dash-client-banner-label">
+                Showing tasks for <strong>{clientFilter}</strong>
+              </span>
+              <button className="dash-client-banner-clear" onClick={() => setClientFilter(null)} title="Clear filter">✕ Clear</button>
+            </div>
+          )}
           <div className="dash-sidebar">
             <div className="dash-sidebar-header">
               <span className="dash-sidebar-title">{showArch?'Archived':'Tasks'}</span>
@@ -1529,6 +1565,47 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
             onOpenTask={(id) => setDetailId(id)}
             onNavigateToDate={(d) => { setSelDate(d); setViewMode('list'); }}
           />
+        </div>
+      )}
+      {viewMode === 'clients' && (
+        <div className="dash-alt-view dash-clients-view">
+          <div className="dash-clients-header">
+            <div>
+              <div className="dash-clients-title">Clients</div>
+              {clientIdField && (
+                <div className="dash-clients-sub">Grouped by <strong>{clientIdField.label}</strong></div>
+              )}
+            </div>
+            <div className="dash-clients-count">
+              {clients.length} {clients.length === 1 ? 'client' : 'clients'}
+            </div>
+          </div>
+          {clients.length === 0 && (
+            <div className="dash-clients-empty">
+              No clients yet. Add a value to <strong>{clientIdField?.label || 'the client field'}</strong> on any task and they'll appear here.
+            </div>
+          )}
+          {clients.length > 0 && (
+            <div className="dash-clients-list">
+              {clients.map(c => (
+                <button
+                  key={c.value}
+                  className="dash-clients-row"
+                  onClick={() => { setClientFilter(c.value); setViewMode('list'); }}
+                  title={`Show tasks for ${c.value}`}
+                >
+                  <div className="dash-clients-row-main">
+                    <div className="dash-clients-row-value">{c.value}</div>
+                    <div className="dash-clients-row-meta">
+                      {c.active_count} active · {c.task_count} total
+                      {c.last_activity_at && <> · last activity {fmtDate(c.last_activity_at)}</>}
+                    </div>
+                  </div>
+                  <div className="dash-clients-row-arrow">›</div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {ctx&&<div className="dash-context-menu" style={{left:ctx.x,top:ctx.y}}><button onClick={()=>ctxAct('pin')}>{ctx.task.pinned?'📌 Unpin':'📌 Pin'}</button><button onClick={()=>ctxAct('done')}>✅ Mark Done</button><button onClick={()=>{setDetailId(ctx.task.id);setCtx(null);}}>📝 Open Detail</button>{showArch?<><button onClick={()=>ctxAct('unarchive')}>📤 Restore</button><button className="dash-context-danger" onClick={()=>ctxAct('delete-permanent')}>🗑️ Delete permanently</button></>:<button className="dash-context-danger" onClick={()=>ctxAct('archive')}>🗂️ Archive</button>}</div>}

@@ -93,6 +93,25 @@ export default function App() {
     api.savePreferences({ last_active_space_id: space.id }).catch(() => {});
   }, []);
 
+  // Phase C Batch 3 — open a specific task in its space. Used by the Countdown
+  // modal on the landing page, where we know both the task id and its space
+  // id but need to resolve the full space object before navigating. Looks up
+  // via the API rather than caching spaces here — spaces are small, the call
+  // is fast, and we avoid a second source of truth.
+  const openTaskInSpace = useCallback(async (spaceId, taskId) => {
+    try {
+      const d = await api.getSpaces();
+      const space = (d.spaces || []).find(s => s.id === spaceId);
+      if (!space) return;
+      setPendingOpenTask(taskId);
+      setActiveSpace(space);
+      setView('dashboard');
+      api.savePreferences({ last_active_space_id: space.id }).catch(() => {});
+    } catch (e) {
+      // Silent fail — user can still navigate manually.
+    }
+  }, []);
+
   const backToLanding = useCallback(() => {
     setView('landing');
     setActiveSpace(null);
@@ -208,6 +227,7 @@ export default function App() {
           theme={theme}
           onToggleTheme={toggleTheme}
           onSelectSpace={openSpace}
+          onOpenTaskInSpace={openTaskInSpace}
           onLogout={handleLogout}
           onOpenPomodoro={openPomodoro}
           onOpenSettings={() => setView('settings')}

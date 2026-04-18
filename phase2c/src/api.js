@@ -126,6 +126,10 @@ const api = {
   getTaskFields: (taskId) => request(`/tasks/${taskId}/fields`),
   saveTaskFields: (taskId, values) => request(`/tasks/${taskId}/fields`, { method: 'PUT', body: { values } }),
 
+  // ── Phase C Batch 3 — Client Directory & Countdown ─────────────────────
+  getClients: (spaceId) => request(`/spaces/${spaceId}/clients`),
+  getCountdown: () => request('/countdown'),
+
   // ── Preferences ─────────────────────────────────────────────────────────
   getPreferences: () => request('/preferences'),
   savePreferences: (body) => request('/preferences', { method: 'PUT', body }),

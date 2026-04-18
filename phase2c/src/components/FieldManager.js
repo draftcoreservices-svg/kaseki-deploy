@@ -27,6 +27,7 @@ function blankDraft() {
     required: false,
     show_in_list: false,
     show_in_create: false,
+    is_client_identifier: false,
   };
 }
 
@@ -60,6 +61,7 @@ export default function FieldManager({ open, space, onClose, onChanged }) {
       required: !!f.required,
       show_in_list: !!f.show_in_list,
       show_in_create: !!f.show_in_create,
+      is_client_identifier: !!f.is_client_identifier,
     });
     setDirty(false);
     setOptionInput('');
@@ -96,6 +98,7 @@ export default function FieldManager({ open, space, onClose, onChanged }) {
         required: draft.required,
         show_in_list: draft.show_in_list,
         show_in_create: draft.show_in_create,
+        is_client_identifier: draft.is_client_identifier,
       };
       if (draft.id) {
         await api.updateField(space.id, draft.id, body);
@@ -253,6 +256,16 @@ export default function FieldManager({ open, space, onClose, onChanged }) {
                   <input type="checkbox" checked={draft.show_in_list} onChange={e => d('show_in_list', e.target.checked)} />
                   <span>Peek in task list rows</span>
                 </label>
+                {/* Phase C Batch 3 — client identifier. Only text-like fields
+                    can be identifiers; dropdowns and checkboxes don't form
+                    meaningful "clients". Only one field per space can hold
+                    the flag — the backend clears it from siblings on save. */}
+                {(draft.type === 'text' || draft.type === 'number') && (
+                  <label className="cf-checkbox">
+                    <input type="checkbox" checked={draft.is_client_identifier} onChange={e => d('is_client_identifier', e.target.checked)} />
+                    <span>Use as client identifier — tasks group by this field's value in the Clients tab</span>
+                  </label>
+                )}
               </div>
 
               <div className="fm-actions">

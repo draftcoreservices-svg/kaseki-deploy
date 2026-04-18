@@ -124,6 +124,9 @@ pct push $CT "$WORK/phase2c/src/components/EventContext.js"      /opt/kaseki/src
 pct push $CT "$WORK/phase2c/server/activity-actions.js"          /opt/kaseki/src/server/activity-actions.js
 pct push $CT "$WORK/phase2c/server/activity-actions.js"          /opt/kaseki/src/client-src/src/activity-actions.js
 
+# ── Phase C Batch 3 additions (Client Directory + Countdown) ───
+pct push $CT "$WORK/phase2c/src/components/CountdownModal.js"    /opt/kaseki/src/client-src/src/components/CountdownModal.js
+
 # ── 5. Append CSS ─────────────────────────────────────────────────────
 echo ""
 echo "[5/8] Appending Phase 2C CSS to index.css…"
