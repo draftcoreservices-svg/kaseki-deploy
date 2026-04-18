@@ -1356,3 +1356,131 @@
   flex: 1;
   min-width: 120px;
 }
+
+/* ─── Custom Fields (Phase B Batch 4) ──────────────────────────────────── */
+.cf-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 20px;
+}
+@media (max-width: 720px) {
+  .cf-grid { grid-template-columns: 1fr; }
+}
+.cf-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cf-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary, #9ca3af);
+  font-weight: 500;
+}
+.cf-input {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 14px;
+  background: var(--bg-subtle, rgba(255,255,255,0.03));
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.12));
+  color: var(--text-primary, #fff);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+.cf-input:focus {
+  outline: none;
+  border-color: var(--card-accent, #3b9eff);
+}
+.cf-textarea {
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.4;
+}
+.cf-display {
+  font-size: 14px;
+  color: var(--text-primary, #e5e7eb);
+  padding: 2px 0;
+}
+.cf-empty {
+  color: var(--text-tertiary, #6b7280);
+  font-size: 14px;
+  font-style: italic;
+}
+.cf-link {
+  color: var(--card-accent, #3b9eff);
+  text-decoration: none;
+}
+.cf-link:hover { text-decoration: underline; }
+.cf-longtext {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  background: var(--bg-subtle, rgba(255,255,255,0.03));
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+}
+.cf-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 14px;
+}
+.cf-checkbox input[type="checkbox"] {
+  width: 16px; height: 16px;
+  accent-color: var(--card-accent, #3b9eff);
+}
+.cf-currency-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.cf-currency-prefix {
+  position: absolute;
+  left: 10px;
+  color: var(--text-tertiary, #9ca3af);
+  font-size: 14px;
+  pointer-events: none;
+}
+.cf-currency-input {
+  padding-left: 22px !important;
+}
+.cf-multiselect {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cf-multiselect-chip {
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--bg-subtle, rgba(255,255,255,0.03));
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.12));
+  color: var(--text-secondary, #9ca3af);
+  transition: background 120ms, border-color 120ms;
+}
+.cf-multiselect-chip:hover {
+  background: var(--bg-hover, rgba(255,255,255,0.06));
+}
+.cf-multiselect-chip--active {
+  background: var(--card-accent-bg, rgba(59,158,255,0.15));
+  border-color: var(--card-accent, #3b9eff);
+  color: var(--card-accent, #3b9eff);
+}
+.cf-multichips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.cf-chip {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  background: var(--bg-subtle, rgba(255,255,255,0.06));
+  color: var(--text-secondary, #9ca3af);
+}

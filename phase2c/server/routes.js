@@ -97,6 +97,54 @@ function attachTagsToTasks(tasks) {
   return tasks.map(t => ({ ...t, tags: byTask[t.id] || [] }));
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Custom fields: seed preset defaults when a new space is created
+// Idempotent — skips any field_key already present for that space.
+// ───────────────────────────────────────────────────────────────────────────
+function seedDefaultFieldsForSpace(userId, spaceId, presetId) {
+  const preset = getPreset(presetId);
+  if (!preset || !preset.default_fields || preset.default_fields.length === 0) return;
+  const db = getDb();
+  const existing = db.prepare('SELECT field_key FROM custom_field_definitions WHERE user_id = ? AND space_id = ?').all(userId, spaceId);
+  const existingKeys = new Set(existing.map(r => r.field_key));
+  const insert = db.prepare(`
+    INSERT INTO custom_field_definitions
+      (user_id, space_id, field_key, label, type, options, sort_order, show_in_list, show_in_create)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  preset.default_fields.forEach((f, i) => {
+    if (existingKeys.has(f.key)) return;
+    const optsJson = f.options ? JSON.stringify(f.options) : null;
+    // Heuristic: first two fields peek in list view and show on create modal.
+    const showInList = i < 2 ? 1 : 0;
+    const showInCreate = i < 2 ? 1 : 0;
+    insert.run(userId, spaceId, f.key, f.label, f.type, optsJson, i, showInList, showInCreate);
+  });
+}
+
+// One-shot migration — runs on first request per process for each user-space.
+// Seeds preset defaults for any pre-existing space that has no field
+// definitions yet. After the first successful pass, we mark the user as
+// migrated via a sentinel key so we don't rescan on every request.
+const customFieldMigrationDone = new Set();
+function runCustomFieldBackfillOnce(userId) {
+  if (customFieldMigrationDone.has(userId)) return;
+  customFieldMigrationDone.add(userId);
+  try {
+    const db = getDb();
+    const spaces = db.prepare('SELECT id, preset FROM spaces WHERE user_id = ?').all(userId);
+    for (const s of spaces) {
+      const cnt = db.prepare('SELECT COUNT(*) AS n FROM custom_field_definitions WHERE user_id = ? AND space_id = ?').get(userId, s.id);
+      if (cnt.n === 0 && s.preset) {
+        seedDefaultFieldsForSpace(userId, s.id, s.preset);
+      }
+    }
+  } catch (e) {
+    console.error('[custom-field backfill] failed for user', userId, e.message);
+    customFieldMigrationDone.delete(userId); // allow retry
+  }
+}
+
 // Verify a space belongs to the current user. Returns the space row or null.
 function getUserSpace(userId, spaceId) {
   const db = getDb();
@@ -152,6 +200,11 @@ router.post('/spaces', authenticate, (req, res) => {
       req.user.id, name.trim(), icon, color, preset || null, (max?.m || 0) + 1, visible === 0 ? 0 : 1
     );
     const space = db.prepare('SELECT * FROM spaces WHERE id = ?').get(result.lastInsertRowid);
+    // Seed preset's default fields for the new space.
+    if (preset) {
+      try { seedDefaultFieldsForSpace(req.user.id, space.id, preset); }
+      catch (e) { console.error('[space create] field seed failed:', e.message); }
+    }
     res.json({ space });
   } catch (err) {
     if (String(err.message).includes('UNIQUE')) return res.status(409).json({ error: 'A space with that name already exists' });
@@ -334,6 +387,15 @@ router.post('/spaces/onboard', authenticate, (req, res) => {
       return res.status(409).json({ error: 'One of the names you chose is already used by another space. Rename it and try again.' });
     }
     throw err;
+  }
+
+  // Seed custom field definitions from each preset — outside the transaction
+  // so a seed failure doesn't block space creation itself.
+  for (const s of createdSpaces) {
+    if (s.preset) {
+      try { seedDefaultFieldsForSpace(req.user.id, s.id, s.preset); }
+      catch (e) { console.error('[onboard] field seed failed for space', s.id, e.message); }
+    }
   }
 
   res.json({ spaces: createdSpaces, quick_capture_space_id: quickCaptureId });
@@ -1530,6 +1592,121 @@ router.get('/calendar', authenticate, (req, res) => {
   const todos = filterDeleted(db.prepare(`SELECT * FROM todos WHERE user_id = ? AND date >= ? AND date <= ?${spaceFilter} AND dismissed = 0 ORDER BY date ASC`).all(...bind));
 
   res.json({ events, tasks, todos });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CUSTOM FIELDS (Phase B Batch 4)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Parse options JSON for dropdown/multi-select fields into an array.
+function parseFieldDef(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    options: row.options ? safeParseArray(row.options) : null,
+  };
+}
+function safeParseArray(s) {
+  try { const v = JSON.parse(s); return Array.isArray(v) ? v : null; } catch { return null; }
+}
+
+// GET /spaces/:id/fields — list field definitions for a space
+router.get('/spaces/:id/fields', authenticate, (req, res) => {
+  const space = requireSpace(req, res, req.params.id);
+  if (!space) return;
+  // On first access, backfill from preset if the space has no fields yet.
+  runCustomFieldBackfillOnce(req.user.id);
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT * FROM custom_field_definitions
+    WHERE user_id = ? AND space_id = ?
+    ORDER BY sort_order ASC, id ASC
+  `).all(req.user.id, space.id);
+  res.json({ fields: rows.map(parseFieldDef) });
+});
+
+// GET /tasks/:id/fields — get field values for a task, joined with definitions
+// so the client can render labelled inputs without a second call.
+router.get('/tasks/:id/fields', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  // Make sure fields exist for the space — backfill if missing.
+  runCustomFieldBackfillOnce(req.user.id);
+  const rows = db.prepare(`
+    SELECT d.id AS field_id, d.field_key, d.label, d.type, d.options,
+           d.required, d.show_in_list, d.show_in_create, d.sort_order,
+           v.value
+    FROM custom_field_definitions d
+    LEFT JOIN custom_field_values v
+      ON v.field_id = d.id AND v.task_id = ?
+    WHERE d.user_id = ? AND d.space_id = ?
+    ORDER BY d.sort_order ASC, d.id ASC
+  `).all(id, req.user.id, task.space_id);
+  const fields = rows.map(r => ({
+    field_id: r.field_id,
+    field_key: r.field_key,
+    label: r.label,
+    type: r.type,
+    options: r.options ? safeParseArray(r.options) : null,
+    required: !!r.required,
+    show_in_list: !!r.show_in_list,
+    show_in_create: !!r.show_in_create,
+    sort_order: r.sort_order,
+    value: r.value,
+  }));
+  res.json({ fields });
+});
+
+// PUT /tasks/:id/fields — bulk update field values
+// Body: { values: { field_id: <value>, ... } }
+// Value of null or empty string deletes the row.
+router.put('/tasks/:id/fields', authenticate, (req, res) => {
+  const id = parseInt(req.params.id);
+  const { values } = req.body || {};
+  if (!values || typeof values !== 'object') return res.status(400).json({ error: 'values object required' });
+
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  // Guard: only accept field_ids that actually belong to this space.
+  const validFields = db.prepare(`
+    SELECT id, type, options, label FROM custom_field_definitions
+    WHERE user_id = ? AND space_id = ?
+  `).all(req.user.id, task.space_id);
+  const validIds = new Map(validFields.map(f => [f.id, f]));
+
+  const upsert = db.prepare(`
+    INSERT INTO custom_field_values (task_id, field_id, value, updated_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(task_id, field_id) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `);
+  const del = db.prepare('DELETE FROM custom_field_values WHERE task_id = ? AND field_id = ?');
+
+  const tx = db.transaction(() => {
+    for (const [fidStr, raw] of Object.entries(values)) {
+      const fid = parseInt(fidStr);
+      if (!validIds.has(fid)) continue;
+      const def = validIds.get(fid);
+      // Normalise value by type
+      let v = raw;
+      if (v === undefined || v === null || v === '') {
+        del.run(id, fid);
+        continue;
+      }
+      if (def.type === 'checkbox') v = v ? '1' : '0';
+      else if (def.type === 'multi-select') v = Array.isArray(v) ? JSON.stringify(v) : String(v);
+      else v = String(v);
+      upsert.run(id, fid, v);
+    }
+    db.prepare('UPDATE tasks SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+  });
+  tx();
+
+  logActivity(id, req.user.id, 'edited', 'Custom fields updated');
+  res.json({ success: true });
 });
 
 module.exports = router;

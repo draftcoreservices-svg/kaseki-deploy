@@ -8,6 +8,7 @@ import ViewSwitcher from '../components/ViewSwitcher';
 import SavedViewsMenu from '../components/SavedViewsMenu';
 import { TemplateManager, TemplatePicker } from '../components/TemplateManager';
 import TagManager from '../components/TagManager';
+import CustomFieldInput from '../components/CustomFieldInput';
 import SpaceIcon from '../components/SpaceIcon';
 
 // ─── Status / priority / tag colour constants (unchanged from Phase 2B) ───
@@ -269,12 +270,24 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
   const [form, setForm] = useState({});
   const [newSub, setNewSub] = useState('');
   const [newNote, setNewNote] = useState('');
+  const [customFields, setCustomFields] = useState([]); // array of field defs with current value
+  const [customDraft, setCustomDraft] = useState({});   // { field_id: value } during edit
   const fileRef = useRef(null);
 
   const load = useCallback(async () => {
     try { const d = await api.getTask(taskId); setData(d); setForm(d.task); } catch (e) { console.error(e); }
   }, [taskId]);
-  useEffect(() => { load(); }, [load]);
+  const loadFields = useCallback(async () => {
+    try {
+      const d = await api.getTaskFields(taskId);
+      setCustomFields(d.fields || []);
+      // Seed draft with current values — used only in edit mode.
+      const draft = {};
+      for (const f of (d.fields || [])) draft[f.field_id] = f.value;
+      setCustomDraft(draft);
+    } catch (e) { console.error('custom fields load failed', e); }
+  }, [taskId]);
+  useEffect(() => { load(); loadFields(); }, [load, loadFields]);
 
   if (!data) return <div className="dash-detail-overlay" onClick={onClose}><div className="dash-detail" onClick={e => e.stopPropagation()}><div style={{ padding: 40, textAlign: 'center', color: 'var(--text-tertiary)' }}>Loading...</div></div></div>;
   const { task, subtasks, notes, files, activity } = data;
@@ -286,6 +299,13 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
       const d = await api.updateTask(task.id, form);
       setData(p => ({ ...p, task: d.task, tags: d.task.tags || p.tags }));
       setForm(d.task);
+      // Save custom field values in parallel. Empty/null values are treated as deletions server-side.
+      if (customFields.length > 0) {
+        try {
+          await api.saveTaskFields(task.id, customDraft);
+          await loadFields();
+        } catch (e) { toast.show({ message: 'Custom fields: ' + e.message, type: 'error' }); }
+      }
       setEditing(false);
       onUpdated();
       toast.show({ message: 'Task saved', type: 'success' });
@@ -366,6 +386,24 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
           </div>
           <div className="dash-detail-section"><h3>Description</h3>{editing?<textarea rows={4} value={form.description||''} onChange={e=>u('description',e.target.value)}/>:<div className="dash-detail-text">{task.description||'No description'}</div>}</div>
           <div className="dash-detail-section"><h3>Goals</h3>{editing?<textarea rows={3} value={form.goals||''} onChange={e=>u('goals',e.target.value)}/>:<div className="dash-detail-text">{task.goals||'No goals set'}</div>}</div>
+          {customFields.length > 0 && (
+            <div className="dash-detail-section">
+              <h3>{space.name} fields</h3>
+              <div className="cf-grid">
+                {customFields.map(f => (
+                  <div key={f.field_id} className="cf-row">
+                    {f.type !== 'checkbox' && <label className="cf-label">{f.label}{f.required ? ' *' : ''}</label>}
+                    <CustomFieldInput
+                      field={f}
+                      value={editing ? customDraft[f.field_id] : f.value}
+                      onChange={(v) => setCustomDraft(d => ({ ...d, [f.field_id]: v }))}
+                      editing={editing}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="dash-detail-section">
             <h3>Tags</h3>
             <TagPicker

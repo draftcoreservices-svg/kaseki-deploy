@@ -356,6 +356,35 @@ function initDependentTables() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS custom_field_definitions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      space_id INTEGER NOT NULL,
+      field_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      type TEXT NOT NULL,
+      options TEXT,
+      required INTEGER NOT NULL DEFAULT 0,
+      show_in_list INTEGER NOT NULL DEFAULT 0,
+      show_in_create INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, space_id, field_key),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_field_values (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      field_id INTEGER NOT NULL,
+      value TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(task_id, field_id),
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (field_id) REFERENCES custom_field_definitions(id) ON DELETE CASCADE
+    );
   `);
 }
 
@@ -435,6 +464,9 @@ function initIndexes() {
     CREATE INDEX IF NOT EXISTS idx_todos_deleted ON todos(deleted_at);
     CREATE INDEX IF NOT EXISTS idx_events_deleted ON events(deleted_at);
     CREATE INDEX IF NOT EXISTS idx_tags_deleted ON tags(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_cfd_space ON custom_field_definitions(user_id, space_id, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_cfv_task ON custom_field_values(task_id);
+    CREATE INDEX IF NOT EXISTS idx_cfv_field ON custom_field_values(field_id);
   `);
 }
 

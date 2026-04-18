@@ -111,6 +111,11 @@ const api = {
   addTaskTag: (taskId, tagId) => request(`/tasks/${taskId}/tags/${tagId}`, { method: 'POST' }),
   removeTaskTag: (taskId, tagId) => request(`/tasks/${taskId}/tags/${tagId}`, { method: 'DELETE' }),
 
+  // ── Custom fields (Phase B) ─────────────────────────────────────────────
+  getSpaceFields: (spaceId) => request(`/spaces/${spaceId}/fields`),
+  getTaskFields: (taskId) => request(`/tasks/${taskId}/fields`),
+  saveTaskFields: (taskId, values) => request(`/tasks/${taskId}/fields`, { method: 'PUT', body: { values } }),
+
   // ── Preferences ─────────────────────────────────────────────────────────
   getPreferences: () => request('/preferences'),
   savePreferences: (body) => request('/preferences', { method: 'PUT', body }),
