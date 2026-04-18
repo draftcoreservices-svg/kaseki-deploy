@@ -13,6 +13,8 @@ import CustomFieldInput from '../components/CustomFieldInput';
 import SpaceIcon from '../components/SpaceIcon';
 import DocumentViewer, { detectKind as detectFileKind } from '../components/DocumentViewer';
 import ACTIVITY_ACTIONS from '../activity-actions';
+import MarkdownEditor from '../components/MarkdownEditor';
+import MarkdownRender from '../components/MarkdownRender';
 
 // ─── Status / priority / tag colour constants (unchanged from Phase 2B) ───
 
@@ -644,8 +646,25 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
           <div className="dash-subtask-add"><input value={newSub} onChange={e=>setNewSub(e.target.value)} placeholder="Add subtask..." onKeyDown={e=>e.key==='Enter'&&addSub()}/><button className="dash-subtask-add-btn" disabled={!newSub} onClick={addSub}>Add</button></div>
         </>}
         {tab==='notes'&&<>
-          <div className="dash-note-add"><textarea rows={3} value={newNote} onChange={e=>setNewNote(e.target.value)} placeholder="Write a note..."/><button className="dash-subtask-add-btn" disabled={!newNote} onClick={addNote}>Add Note</button></div>
-          <div className="dash-note-list">{notes.map(n=><div key={n.id} className="dash-note-item"><p>{n.content}</p><span className="dash-note-time">{fmtDateTime(n.created_at)}</span></div>)}{notes.length===0&&<div className="dash-empty-small">No notes yet</div>}</div>
+          <div className="dash-note-add">
+            <MarkdownEditor
+              value={newNote}
+              onChange={setNewNote}
+              placeholder="Write a note... (supports **Markdown**)"
+              rows={3}
+              onEnterCmd={() => { if (newNote.trim()) addNote(); }}
+            />
+            <button className="dash-subtask-add-btn" disabled={!newNote.trim()} onClick={addNote}>Add Note</button>
+          </div>
+          <div className="dash-note-list">
+            {notes.map(n => (
+              <div key={n.id} className="dash-note-item">
+                <MarkdownRender content={n.content} className="dash-note-content md-render" />
+                <span className="dash-note-time">{fmtDateTime(n.created_at)}</span>
+              </div>
+            ))}
+            {notes.length===0&&<div className="dash-empty-small">No notes yet</div>}
+          </div>
         </>}
         {tab==='files'&&<>
           <button className="dash-file-upload-btn" onClick={()=>fileRef.current?.click()}>📎 Upload Files</button>
@@ -1534,7 +1553,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
             <div className="dash-panels">
               <div className="dash-panel"><div className="dash-panel-header"><span className="dash-panel-title">Todos · {fmtDate(selDate)}</span><button className="dash-panel-add" onClick={()=>setModal('todo')}>+</button></div><div className="dash-panel-body">{todos.map(t=><div key={t.id} className={`dash-todo-item${t.completed?' dash-todo-item--done':''}`} onContextMenu={(e)=>{e.preventDefault();delTd(t);}} title="Right-click to delete permanently"><div className="dash-todo-check" onClick={()=>toggleTd(t)}>{t.completed?'✓':''}</div><span className="dash-todo-text">{t.title}</span>{t.is_recurring?<span className="dash-todo-recurring">🔁</span>:null}<button className="dash-todo-dismiss" onClick={()=>dismissTd(t)} title="Dismiss">✕</button></div>)}{todos.length===0&&<div className="dash-empty-small">No todos for this date</div>}</div></div>
               <div className="dash-panel"><div className="dash-panel-header"><span className="dash-panel-title">Events</span><button className="dash-panel-add" onClick={()=>setModal('event')}>+</button></div><div className="dash-panel-body">{events.map(ev=><div key={ev.id} className="dash-event-item"><div className="dash-event-date"><span className="dash-event-day">{new Date(ev.date).getDate()}</span><span className="dash-event-month">{new Date(ev.date).toLocaleDateString('en-GB',{month:'short'})}</span></div><div className="dash-event-info"><span className="dash-event-title">{ev.title}</span>{ev.time&&<span className="dash-event-time">{ev.time}</span>}</div><button className="dash-event-delete" onClick={()=>delEv(ev)}>✕</button></div>)}{events.length===0&&<div className="dash-empty-small">No events</div>}</div></div>
-              <div className="dash-panel"><div className="dash-panel-header"><span className="dash-panel-title">Notes</span></div><div className="dash-panel-body dash-panel-body--notes"><textarea className="dash-notes-textarea" value={sNotes} onChange={e=>saveN(e.target.value)} placeholder="Type your notes here..."/></div></div>
+              <div className="dash-panel"><div className="dash-panel-header"><span className="dash-panel-title">Notes</span></div><div className="dash-panel-body dash-panel-body--notes"><MarkdownEditor value={sNotes} onChange={saveN} placeholder="Type your notes here... (Markdown supported)" rows={8}/></div></div>
             </div>
           </div>
         </div>
