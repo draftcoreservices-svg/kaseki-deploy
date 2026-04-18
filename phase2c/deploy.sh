@@ -104,20 +104,18 @@ echo ""
 echo "[5/8] Appending Phase 2C CSS to index.css…"
 pct push $CT "$WORK/phase2c/src/phase2c.css" /tmp/phase2c.css
 pct exec $CT -- bash -c "
-  # Strip any previous Phase 2C CSS block (between the start and end markers)
-  # and then re-append the current phase2c.css fresh. This is idempotent AND
-  # always reflects the current sandbox contents — earlier deploys used an
-  # append-only check that left stale rules in place when phase2c.css grew.
+  # Strip any previous Phase 2C CSS block and re-append fresh.
+  #
+  # Implementation: once the start marker exists, everything below it is our
+  # appended Phase 2C block (we always append at end of file). So we use a
+  # sed range delete 'from first start marker through end of file'. This is
+  # robust against repeated markers, missing end markers, nested appends, or
+  # anything else that can happen if a prior run failed mid-write.
   if grep -q 'Phase 2C CSS additions marker' /opt/kaseki/src/client-src/src/index.css 2>/dev/null; then
     echo '  existing Phase 2C block found — stripping and replacing'
-    # Use awk to keep only lines OUTSIDE the marker block.
-    awk '
-      /Phase 2C CSS additions marker end/ { skip = 0; next }
-      /Phase 2C CSS additions marker/     { skip = 1 }
-      !skip { print }
-    ' /opt/kaseki/src/client-src/src/index.css > /tmp/index.css.stripped
+    sed '/\/\* === Phase 2C CSS additions marker === \*\//,\$d' /opt/kaseki/src/client-src/src/index.css > /tmp/index.css.stripped
     mv /tmp/index.css.stripped /opt/kaseki/src/client-src/src/index.css
-    # Verify strip worked — if markers remain, abort so we do not double-append.
+    # Paranoia check — after strip there should be no markers left anywhere.
     if grep -q 'Phase 2C CSS additions marker' /opt/kaseki/src/client-src/src/index.css; then
       echo '  ERROR: marker strip failed, aborting CSS step'
       exit 2
