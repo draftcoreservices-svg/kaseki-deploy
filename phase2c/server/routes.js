@@ -1233,12 +1233,80 @@ router.get('/focus/today', authenticate, (req, res) => {
 
 router.get('/today-summary', authenticate, (req, res) => {
   const db = getDb();
-  const today = new Date().toISOString().split('T')[0];
-  const todos = db.prepare('SELECT * FROM todos WHERE user_id = ? AND date = ? AND dismissed = 0').all(req.user.id, today);
-  const events = db.prepare('SELECT * FROM events WHERE user_id = ? AND date = ? ORDER BY time ASC').all(req.user.id, today);
-  const dueTasks = db.prepare("SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date = ? ORDER BY priority DESC").all(req.user.id, today);
-  const overdue = db.prepare("SELECT * FROM tasks WHERE user_id = ? AND archived = 0 AND status != 'done' AND due_date IS NOT NULL AND due_date < ? ORDER BY due_date ASC").all(req.user.id, today);
-  res.json({ todos, events, dueTasks, overdue });
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+  const yesterdayDate = new Date(now);
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterday = yesterdayDate.toISOString().split('T')[0];
+
+  // Tasks and todos get space metadata joined so the client can render
+  // space icons, colours, and names without a second round trip.
+  const taskJoin = `
+    SELECT t.*,
+           s.name  AS space_name,
+           s.icon  AS space_icon,
+           s.color AS space_color,
+           s.preset AS space_preset
+    FROM tasks t
+    LEFT JOIN spaces s ON t.space_id = s.id
+  `;
+  const todoJoin = `
+    SELECT t.*,
+           s.name  AS space_name,
+           s.icon  AS space_icon,
+           s.color AS space_color
+    FROM todos t
+    LEFT JOIN spaces s ON t.space_id = s.id
+  `;
+  const eventJoin = `
+    SELECT e.*,
+           s.name  AS space_name,
+           s.icon  AS space_icon,
+           s.color AS space_color
+    FROM events e
+    LEFT JOIN spaces s ON e.space_id = s.id
+  `;
+
+  const todos = db.prepare(`${todoJoin} WHERE t.user_id = ? AND t.date = ? AND t.dismissed = 0`).all(req.user.id, today);
+  const events = db.prepare(`${eventJoin} WHERE e.user_id = ? AND e.date = ? ORDER BY e.time ASC`).all(req.user.id, today);
+  const tasks_due_today = db.prepare(`${taskJoin} WHERE t.user_id = ? AND t.archived = 0 AND t.status != 'done' AND t.due_date = ? ORDER BY t.priority DESC`).all(req.user.id, today);
+  const overdue = db.prepare(`${taskJoin} WHERE t.user_id = ? AND t.archived = 0 AND t.status != 'done' AND t.due_date IS NOT NULL AND t.due_date < ? ORDER BY t.due_date ASC`).all(req.user.id, today);
+
+  // Yesterday's completed tasks — anything whose status flipped to 'done'
+  // yesterday. We approximate via updated_at date match since we don't store
+  // a separate completion timestamp.
+  const yesterday_completed = db.prepare(`
+    ${taskJoin}
+    WHERE t.user_id = ?
+      AND t.status = 'done'
+      AND DATE(t.updated_at) = ?
+    ORDER BY t.updated_at DESC
+  `).all(req.user.id, yesterday);
+
+  // Pomodoro stats for today.
+  const focusRows = db.prepare(`
+    SELECT duration_seconds, completed, kind
+    FROM focus_sessions
+    WHERE user_id = ?
+      AND DATE(started_at) = ?
+      AND kind = 'work'
+      AND completed = 1
+  `).all(req.user.id, today);
+  const focus_seconds_today = focusRows.reduce((a, r) => a + (r.duration_seconds || 0), 0);
+  const focus_minutes_today = Math.floor(focus_seconds_today / 60);
+  const focus_sessions_today = focusRows.length;
+
+  res.json({
+    todos,
+    events,
+    tasks_due_today,
+    overdue,
+    yesterday_completed,
+    focus_minutes_today,
+    focus_sessions_today,
+    // Legacy field names preserved for anything still reading them.
+    dueTasks: tasks_due_today,
+  });
 });
 
 router.get('/calendar', authenticate, (req, res) => {

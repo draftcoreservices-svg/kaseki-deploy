@@ -509,3 +509,294 @@
   font-size: 11px;
   opacity: 0.6;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Phase 2C Deploy 1b — Space-aware theming overrides
+   The Dashboard root sets --space-accent and --space-accent-bg inline from
+   space.color. These overrides replace the old --home/--work/--inbox
+   section-specific class variants from Phase 2B's index.css.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Dashboard root sets space variables; fallbacks defined for safety. */
+.dashboard {
+  --space-accent: #3b9eff;
+  --space-accent-bg: rgba(59, 158, 255, 0.15);
+}
+
+/* Replace section-class-based colours with the CSS variable. Any old
+   .dash-*--home/--work/--inbox rule in index.css stays, but these win
+   because they're appended later. */
+.dash-add-btn,
+.dash-subtask-add-btn,
+.dash-file-upload-btn,
+.dash-modal-save,
+.dash-panel-add,
+.dash-detail-save {
+  background: var(--space-accent) !important;
+  border-color: var(--space-accent) !important;
+  color: #fff !important;
+}
+.dash-add-btn:hover,
+.dash-subtask-add-btn:hover,
+.dash-file-upload-btn:hover,
+.dash-modal-save:hover,
+.dash-panel-add:hover,
+.dash-detail-save:hover {
+  filter: brightness(1.1);
+}
+.dash-add-btn:disabled,
+.dash-subtask-add-btn:disabled,
+.dash-modal-save:disabled,
+.dash-detail-save:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ViewSwitcher active tab uses space accent */
+.vs-btn--active {
+  background: var(--space-accent) !important;
+  color: #fff !important;
+  border-color: var(--space-accent) !important;
+}
+
+/* Timeline day with space tasks gets space-accent dot */
+.dash-tl-dot--space {
+  background: var(--space-accent);
+}
+
+/* Task detail "section" (really space) badge */
+.dash-detail-space-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  background: var(--space-accent-bg);
+  color: var(--space-accent);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+/* Dashboard title icon (was emoji; now space icon) */
+.dash-title-space-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: var(--space-accent-bg);
+  color: var(--space-accent);
+  margin-right: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Landing page (Phase 2C Deploy 1b)
+   Dynamic big cards per space, stacked when many. Dark-mode first.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.landing-p2c-root {
+  min-height: 100vh;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.landing-p2c-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 32px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+}
+.landing-p2c-greeting {
+  font-size: 18px; display: inline-flex; align-items: center; gap: 8px;
+}
+.landing-p2c-greeting strong { font-weight: 700; }
+.landing-p2c-header-actions { display: flex; align-items: center; gap: 8px; }
+
+.landing-p2c-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  gap: 32px;
+}
+@media (max-width: 960px) {
+  .landing-p2c-content { grid-template-columns: minmax(0, 1fr); }
+}
+
+.landing-p2c-title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 24px 0 14px;
+  color: var(--text-primary);
+}
+
+.landing-p2c-spaces {
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+.landing-p2c-card {
+  display: flex; align-items: center; gap: 18px;
+  padding: 22px 24px;
+  border-radius: 16px;
+  background: var(--bg-secondary, #1a1a1a);
+  border: 1px solid var(--border, rgba(255,255,255,0.06));
+  cursor: pointer;
+  text-align: left;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+  position: relative;
+  overflow: hidden;
+  color: var(--text-primary);
+}
+.landing-p2c-card::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(120deg, var(--card-accent-bg, rgba(59,158,255,0.1)) 0%, transparent 50%);
+  opacity: 0.8;
+  pointer-events: none;
+}
+.landing-p2c-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--card-accent, #3b9eff);
+}
+.landing-p2c-card-icon {
+  width: 56px; height: 56px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 14px;
+  background: var(--card-accent-bg, rgba(59,158,255,0.15));
+  color: var(--card-accent, #3b9eff);
+  flex-shrink: 0;
+  position: relative; z-index: 1;
+}
+.landing-p2c-card-info {
+  flex: 1; min-width: 0;
+  position: relative; z-index: 1;
+}
+.landing-p2c-card-name {
+  font-size: 20px; font-weight: 700;
+  margin-bottom: 4px;
+}
+.landing-p2c-card-sub {
+  font-size: 13px;
+  color: var(--text-secondary, #9ca3af);
+  text-transform: capitalize;
+}
+.landing-p2c-card-arrow {
+  color: var(--card-accent, #3b9eff);
+  font-size: 22px;
+  position: relative; z-index: 1;
+  transition: transform 160ms ease;
+}
+.landing-p2c-card:hover .landing-p2c-card-arrow {
+  transform: translateX(4px);
+}
+
+.landing-p2c-empty {
+  padding: 30px;
+  border-radius: 12px;
+  background: var(--bg-secondary, #1a1a1a);
+  color: var(--text-secondary, #9ca3af);
+  text-align: center;
+  font-size: 14px;
+}
+
+.landing-p2c-right-title {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-secondary); font-weight: 600; margin-bottom: 12px;
+}
+
+.landing-p2c-quick-access {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.landing-p2c-qa-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg-secondary, #1a1a1a);
+  border: 1px solid var(--border, rgba(255,255,255,0.05));
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease;
+  opacity: 0.7;
+}
+.landing-p2c-qa-card:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); opacity: 1; }
+.landing-p2c-qa-icon { font-size: 18px; flex-shrink: 0; }
+.landing-p2c-qa-info { flex: 1; min-width: 0; }
+.landing-p2c-qa-name { font-size: 13px; font-weight: 600; }
+.landing-p2c-qa-desc { font-size: 11px; color: var(--text-secondary, #9ca3af); }
+.landing-p2c-qa-arrow { color: var(--text-secondary, #9ca3af); font-size: 14px; }
+
+.landing-p2c-footer {
+  padding: 14px 32px;
+  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
+  display: flex; justify-content: space-between; align-items: center;
+  color: var(--text-secondary, #9ca3af); font-size: 12px;
+}
+.landing-p2c-footer kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  margin: 0 1px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TodayPanel space-aware icons
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.today-space-icon-wrap {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   GlobalSearch space badges
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.gs-space-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.gs-space-badge-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 12px; height: 12px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   QuickCapture target space pill
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.qc-target-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+}
+.qc-target-none {
+  color: #f87171;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Dashboard Kanban / Matrix / Calendar — use space accent where section-
+   specific colouring used to live. Base layouts carry over from index.css.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.kb-column-accent {
+  background: var(--space-accent);
+}
+.mx-quadrant-card-accent {
+  border-left-color: var(--space-accent);
+}
+.cal-event-pill--space {
+  background: var(--space-accent-bg);
+  color: var(--space-accent);
+  border-color: var(--space-accent);
+}
