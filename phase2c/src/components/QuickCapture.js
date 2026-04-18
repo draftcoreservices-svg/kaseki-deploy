@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import { useToast } from './ToastContext';
+import { useEventBus } from './EventContext';
 import { parseNaturalDate } from '../lib/naturalDate';
 import SpaceIcon from './SpaceIcon';
 
@@ -9,6 +10,7 @@ import SpaceIcon from './SpaceIcon';
 // direct the user to Settings.
 export default function QuickCapture({ open, onClose, onCaptured, onOpenSettings }) {
   const toast = useToast();
+  const { signal } = useEventBus();
   const [title, setTitle] = useState('');
   const [preview, setPreview] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -68,6 +70,7 @@ export default function QuickCapture({ open, onClose, onCaptured, onOpenSettings
         : { title: trimmed };
       const d = await api.quickCapture(payload);
       toast.show({ message: `Captured to ${targetSpace.name}`, type: 'success' });
+      signal('task_created', { taskId: d?.task?.id });
       onCaptured && onCaptured(d.task);
       onClose();
     } catch (e) {

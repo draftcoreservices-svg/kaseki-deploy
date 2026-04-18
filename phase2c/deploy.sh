@@ -131,6 +131,9 @@ pct push $CT "$WORK/phase2c/src/components/CountdownModal.js"    /opt/kaseki/src
 pct push $CT "$WORK/phase2c/src/components/MarkdownRender.js"    /opt/kaseki/src/client-src/src/components/MarkdownRender.js
 pct push $CT "$WORK/phase2c/src/components/MarkdownEditor.js"    /opt/kaseki/src/client-src/src/components/MarkdownEditor.js
 
+# ── Phase H additions (the Orb — Kaseki the character) ───
+pct push $CT "$WORK/phase2c/src/components/Orb.js"               /opt/kaseki/src/client-src/src/components/Orb.js
+
 # ── 5. Append CSS ─────────────────────────────────────────────────────
 echo ""
 echo "[5/8] Appending Phase 2C CSS to index.css…"

@@ -11,6 +11,7 @@ import QuickCapture from './components/QuickCapture';
 import ShortcutHelp from './components/ShortcutHelp';
 import { ToastProvider } from './components/ToastContext';
 import { EventProvider } from './components/EventContext';
+import Orb from './components/Orb';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -248,6 +249,7 @@ export default function App() {
         onCaptured={() => {}}
       />
       <ShortcutHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <Orb spaceColor={activeSpace?.color} />
     </ToastProvider>
     </EventProvider>
   );

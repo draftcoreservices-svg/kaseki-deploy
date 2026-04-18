@@ -3310,3 +3310,244 @@ select option:hover {
   flex: 1;
   min-height: 100px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Phase H Stage 1 — Kaseki (the Orb)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Root container ────────────────────────────────────────────────── */
+.orb {
+  position: fixed;
+  width: 90px;
+  height: 90px;
+  z-index: 9000;
+  touch-action: none;                    /* prevents page scroll on touch-drag */
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  /* The body uses this as the baseline hue; reactions override via filters */
+  --orb-color: #5b7a9e;
+  --orb-color-bright: color-mix(in oklab, var(--orb-color) 75%, white);
+  --orb-color-dark:   color-mix(in oklab, var(--orb-color) 60%, black);
+  transition: left 0.18s cubic-bezier(.4,.9,.35,1), top 0.18s cubic-bezier(.4,.9,.35,1);
+}
+.orb:active { cursor: grabbing; }
+
+/* ── Body: circle with radial gradient + breathing animation ───────── */
+.orb-body {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--orb-color-bright) 0%,
+    var(--orb-color) 55%,
+    var(--orb-color-dark) 100%
+  );
+  box-shadow:
+    0 6px 22px -4px rgba(0,0,0,0.45),
+    0 0 40px -8px var(--orb-color),
+    inset 0 -8px 12px -4px var(--orb-color-dark),
+    inset 0 6px 10px -4px rgba(255,255,255,0.2);
+  animation: orbBreathe 4s ease-in-out infinite;
+  transition:
+    background 0.4s ease,
+    box-shadow 0.4s ease,
+    filter 0.25s ease;
+}
+
+/* Idle breathing — gentle pulse so the Orb feels alive but not distracting. */
+@keyframes orbBreathe {
+  0%, 100% { transform: scale(0.96); }
+  50%      { transform: scale(1.04); }
+}
+
+/* ── Eyes ─────────────────────────────────────────────────────────── */
+.orb-eye {
+  position: absolute;
+  top: 34%;
+  width: 9px;
+  height: 9px;
+  background: #0a1220;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4), inset 0 -1px 1px rgba(255,255,255,0.2);
+  transition: transform 0.18s cubic-bezier(.4,.9,.35,1), height 0.18s ease, top 0.18s ease;
+}
+.orb-eye--left  { left: 28%; }
+.orb-eye--right { right: 28%; }
+
+/* Each eye has a subtle blink-like "look" when the Orb idles.
+   Implemented as very occasional height scrunch; the animation-delay
+   is staggered between eyes so they don't blink exactly in unison. */
+.orb-eye {
+  animation: orbBlink 6s ease-in-out infinite;
+}
+.orb-eye--right { animation-delay: 0.08s; }
+
+@keyframes orbBlink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  96%, 98%      { transform: scaleY(0.08); }
+}
+
+/* ── Reaction: celebrate (task_completed) ──────────────────────────── */
+/* Warm hue shift + big joyful pulse. Eyes curve up to "happy" shape. */
+.orb--react-celebrate .orb-body {
+  animation:
+    orbBreathe 4s ease-in-out infinite,
+    orbCelebratePulse 0.9s ease-out;
+  filter: hue-rotate(30deg) saturate(1.5) brightness(1.15);
+}
+.orb--react-celebrate .orb-eye {
+  animation:
+    orbBlink 6s ease-in-out infinite,
+    orbEyesHappy 0.9s ease-out;
+}
+@keyframes orbCelebratePulse {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.25); }
+  60%  { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+@keyframes orbEyesHappy {
+  0%, 100% { transform: scaleY(1) translateY(0); }
+  30%, 70% { transform: scaleY(0.15) translateY(-2px); border-radius: 50% 50% 0 0; }
+}
+
+/* ── Reaction: create (task_created, click-notice) ─────────────────── */
+/* Tiny squish-bounce, no colour change. Acknowledgement without drama. */
+.orb--react-create .orb-body {
+  animation:
+    orbBreathe 4s ease-in-out infinite,
+    orbCreateBounce 0.4s ease-out;
+}
+@keyframes orbCreateBounce {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(0.88) scaleY(0.82); }
+  70%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+/* ── Reaction: flinch (errors) ─────────────────────────────────────── */
+/* Horizontal shake + red shift + eyes WIDEN to convey surprise/worry. */
+.orb--react-flinch .orb-body {
+  animation:
+    orbBreathe 4s ease-in-out infinite,
+    orbFlinchShake 0.5s ease-in-out;
+  filter: hue-rotate(-80deg) saturate(1.8);
+}
+.orb--react-flinch .orb-eye {
+  animation:
+    orbBlink 6s ease-in-out infinite,
+    orbEyesWiden 0.5s ease-out;
+}
+@keyframes orbFlinchShake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-6px); }
+  40%      { transform: translateX(5px); }
+  60%      { transform: translateX(-4px); }
+  80%      { transform: translateX(3px); }
+}
+@keyframes orbEyesWiden {
+  0%, 100% { transform: scale(1); }
+  30%      { transform: scale(1.5); top: 30%; }
+}
+
+/* ── Reaction: ripple (file_uploaded) ──────────────────────────────── */
+/* An expanding ring drops downward from the Orb. Visually distinct from
+   the outward-radiating celebration sparkles. */
+.orb-ripple {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 90px;
+  height: 90px;
+  margin-left: -45px;
+  margin-top: -45px;
+  border: 2px solid var(--orb-color-bright);
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0.85;
+  animation: orbRippleDrop 0.7s ease-out forwards;
+}
+@keyframes orbRippleDrop {
+  0%   { transform: scale(0.5) translateY(0); opacity: 0.9; }
+  100% { transform: scale(1.8) translateY(30px); opacity: 0; }
+}
+
+/* ── Reaction: relax (timer_stopped post-focus) ────────────────────── */
+/* Small satisfaction puff as focus mode clears. */
+.orb--react-relax .orb-body {
+  animation:
+    orbBreathe 4s ease-in-out infinite,
+    orbCreateBounce 0.6s ease-out;
+}
+
+/* ── Persistent mode: focus (timer running) ────────────────────────── */
+/* Eyes narrow, breathing slows, subtle purple tint. Persists until
+   timer_stopped clears it. */
+.orb--focus .orb-body {
+  animation: orbBreatheSlow 6s ease-in-out infinite;
+  filter: hue-rotate(60deg) saturate(0.85);
+}
+.orb--focus .orb-eye {
+  height: 3px;
+  top: 38%;
+  border-radius: 40%;
+  animation: none;                       /* no blinks while focused */
+}
+@keyframes orbBreatheSlow {
+  0%, 100% { transform: scale(0.97); }
+  50%      { transform: scale(1.03); }
+}
+
+/* ── Sparkle particles (celebrate burst) ───────────────────────────── */
+.orb-sparkle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    hsl(var(--sparkle-hue), 95%, 70%) 0%,
+    hsl(var(--sparkle-hue), 90%, 55%) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+  box-shadow: 0 0 8px hsl(var(--sparkle-hue), 95%, 65%);
+  animation: orbSparkleFly 0.9s cubic-bezier(.2,.7,.4,1) forwards;
+}
+@keyframes orbSparkleFly {
+  0% {
+    transform: translate(0, 0) scale(0.4);
+    opacity: 1;
+  }
+  50% {
+    transform: translate(calc(var(--sparkle-dx) * 0.6), calc(var(--sparkle-dy) * 0.6)) scale(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--sparkle-dx), var(--sparkle-dy)) scale(0.2);
+    opacity: 0;
+  }
+}
+
+/* Respect reduced-motion preference — disable decorative animations
+   but keep reactions visible (shortened) so the Orb still communicates. */
+@media (prefers-reduced-motion: reduce) {
+  .orb-body, .orb-eye {
+    animation: none !important;
+  }
+  .orb--react-celebrate .orb-body,
+  .orb--react-create .orb-body,
+  .orb--react-flinch .orb-body,
+  .orb--react-relax .orb-body {
+    animation-duration: 0.3s !important;
+  }
+  .orb-sparkle, .orb-ripple {
+    animation-duration: 0.4s !important;
+  }
+}

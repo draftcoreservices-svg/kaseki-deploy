@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import api from '../api';
 import { useToast } from '../components/ToastContext';
+import { useEventBus } from '../components/EventContext';
 import KanbanView from '../components/KanbanView';
 import MatrixView from '../components/MatrixView';
 import CalendarView from '../components/CalendarView';
@@ -126,6 +127,7 @@ function Timeline({ space, tasks, events, selectedDate, onSelectDate }) {
 
 function CreateTaskModal({ space, onClose, onCreated, prefillTemplate }) {
   const toast = useToast();
+  const { signal } = useEventBus();
   const [form, setForm] = useState(() => {
     const p = prefillTemplate || {};
     return {
@@ -197,8 +199,12 @@ function CreateTaskModal({ space, onClose, onCreated, prefillTemplate }) {
       }
       onCreated(created);
       toast.show({ message: prefillTemplate ? `Created from "${prefillTemplate.name}"` : 'Task created', type: 'success' });
+      signal('task_created', { taskId: created?.id });
       onClose();
-    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+    } catch (e) {
+      toast.show({ message: e.message, type: 'error' });
+      signal('task_error', { message: e.message });
+    }
     setLoading(false);
   };
   return (
@@ -354,6 +360,7 @@ function TagPicker({ space, currentTags, availableTags, onAdd, onRemove, onCreat
 
 function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsChanged, allTasks }) {
   const toast = useToast();
+  const { signal } = useEventBus();
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('details');
   const [editing, setEditing] = useState(false);
@@ -449,6 +456,9 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
 
   const save = async () => {
     try {
+      // Detect a done transition — emit celebrate only on actual transition,
+      // not when saving an already-done task with unrelated edits.
+      const wasNotDone = task.status !== 'done';
       const d = await api.updateTask(task.id, form);
       setData(p => ({ ...p, task: d.task, tags: d.task.tags || p.tags }));
       setForm(d.task);
@@ -462,7 +472,13 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
       setEditing(false);
       onUpdated();
       toast.show({ message: 'Task saved', type: 'success' });
-    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+      if (wasNotDone && d.task.status === 'done') {
+        signal('task_completed', { taskId: task.id });
+      }
+    } catch (e) {
+      toast.show({ message: e.message, type: 'error' });
+      signal('task_error', { message: e.message });
+    }
   };
   const addSub = async () => {
     if (!newSub) return;
@@ -505,7 +521,11 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
         message: n === 1 ? 'File uploaded' : `${n} files uploaded`,
         type: 'success',
       });
-    } catch (er) { toast.show({ message: er.message, type: 'error' }); }
+      signal('file_uploaded', { taskId: task.id, count: n });
+    } catch (er) {
+      toast.show({ message: er.message, type: 'error' });
+      signal('task_error', { message: er.message });
+    }
   };
   const delFile = async (f) => {
     try { await api.deleteFile(f.id); load(); toast.show({ message: `File deleted: ${f.original_name}`, type: 'info' }); }
@@ -542,8 +562,12 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
       } else {
         toast.show({ message: 'Timer started', type: 'success' });
       }
+      signal('timer_started', { taskId: task.id });
       load();
-    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+    } catch (e) {
+      toast.show({ message: e.message, type: 'error' });
+      signal('task_error', { message: e.message });
+    }
   };
   const stopTimer = async () => {
     try {
@@ -551,8 +575,12 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
       setActiveStart(null);
       localStorage.removeItem('kaseki-active-timer');
       toast.show({ message: `Timer stopped: ${fmtDuration(r.entry.duration_seconds)}`, type: 'success' });
+      signal('timer_stopped', { taskId: task.id, durationSeconds: r.entry.duration_seconds });
       load();
-    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+    } catch (e) {
+      toast.show({ message: e.message, type: 'error' });
+      signal('task_error', { message: e.message });
+    }
   };
   const delTimeEntry = async (entry) => {
     try {
@@ -967,6 +995,7 @@ function TaskDetail({ taskId, space, onClose, onUpdated, availableTags, onTagsCh
 
 export default function Dashboard({ space, onBack, theme, onToggleTheme, pendingOpenTask, onPendingHandled, onOpenPomodoro, onOpenHelp }) {
   const toast = useToast();
+  const { signal } = useEventBus();
   const [tasks, setTasks] = useState([]);
   const [todos, setTodos] = useState([]);
   const [events, setEvents] = useState([]);
@@ -1175,8 +1204,13 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
         setDetailId(current.id);
       } else if (e.key === 'd' && current) {
         e.preventDefault();
-        try { await api.updateTask(current.id, { status: current.status === 'done' ? 'to_start' : 'done' }); loadT(); }
-        catch (err) { toast.show({ message: err.message, type: 'error' }); }
+        try {
+          const wasNotDone = current.status !== 'done';
+          await api.updateTask(current.id, { status: current.status === 'done' ? 'to_start' : 'done' });
+          if (wasNotDone) signal('task_completed', { taskId: current.id });
+          loadT();
+        }
+        catch (err) { toast.show({ message: err.message, type: 'error' }); signal('task_error', { message: err.message }); }
       } else if (e.key === 'p' && current) {
         e.preventDefault();
         try { await api.updateTask(current.id, { pinned: current.pinned ? 0 : 1 }); loadT(); }
@@ -1201,7 +1235,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [filtered, selectedTask, modal, detailId, loadT, toast]);
+  }, [filtered, selectedTask, modal, detailId, loadT, toast, signal]);
 
   const ctxAct = async (a) => {
     if (!ctx) return;
@@ -1217,7 +1251,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
         });
       }
       if (a === 'unarchive') { await api.unarchiveTask(t.id); toast.show({ message: `Restored: ${t.title}`, type: 'success' }); }
-      if (a === 'done') await api.updateTask(t.id, { status: 'done' });
+      if (a === 'done') { await api.updateTask(t.id, { status: 'done' }); signal('task_completed', { taskId: t.id }); }
       if (a === 'delete-permanent') {
         if (!window.confirm(`Permanently delete "${t.title}"?\n\nThis cannot be undone after 10 seconds.`)) {
           setCtx(null);
@@ -1318,7 +1352,11 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
       for (const id of ids) await api.updateTask(id, { status: 'done' });
       clearBulk(); loadT();
       toast.show({ message: `Marked ${ids.length} task${ids.length !== 1 ? 's' : ''} done`, type: 'success' });
-    } catch (e) { toast.show({ message: e.message, type: 'error' }); }
+      // Single celebration for the whole bulk rather than N — Kaseki shouldn't
+      // be a strobe light when you mark 50 things done. The number of tasks
+      // is in the toast; the Orb emits once.
+      signal('task_completed', { bulk: true, count: ids.length });
+    } catch (e) { toast.show({ message: e.message, type: 'error' }); signal('task_error', { message: e.message }); }
   };
   const bulkPin = async () => {
     const ids = Array.from(bulkSel);
