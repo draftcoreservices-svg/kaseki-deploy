@@ -86,6 +86,18 @@ export default function App() {
     setView('landing');
   }, []);
 
+  // Phase H Stage 2 follow-up — user deleted their account from Settings
+  // (the former "wipe all data" path, now genuinely nukes the account).
+  // The session is already invalid server-side; just clear local state and
+  // let the root render AuthPage. Reset every flag to its first-boot value.
+  const handleAccountDeleted = useCallback(() => {
+    setUser(null);
+    setOnboardingComplete(null);
+    setActiveSpace(null);
+    setTourCompleted(null);
+    setView('landing');
+  }, []);
+
   const handleOnboardingComplete = useCallback(() => {
     setOnboardingComplete(true);
     setView('landing');
@@ -216,6 +228,7 @@ export default function App() {
           onBack={backToLanding}
           onRestartOnboarding={handleRestartOnboarding}
           onTourReplay={() => { setTourCompleted(0); }}
+          onAccountDeleted={handleAccountDeleted}
         />
       )}
       {view === 'pomodoro' && (

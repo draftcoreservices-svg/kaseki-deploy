@@ -329,6 +329,27 @@ router.post('/user/restart-onboarding', authenticate, (req, res) => {
   res.json({ success: true });
 });
 
+// Hard-delete the current user's entire account. Cascades through all
+// user-owned tables via ON DELETE CASCADE (spaces, tasks, todos, events,
+// notes, tags, tag_assignments, file_attachments, time_entries,
+// task_dependencies, custom_field_definitions, custom_field_values,
+// user_preferences, sessions, saved_views, focus_sessions). After this
+// runs, the user row no longer exists and any held session token becomes
+// invalid on the next authenticated request.
+//
+// Intentionally aggressive: the Settings UI requires typing a confirmation
+// phrase to enable the button. At the point this endpoint is called, the
+// user has confirmed they want everything gone. No soft-delete, no
+// grace period.
+router.delete('/user/account', authenticate, (req, res) => {
+  const db = getDb();
+  const userId = req.user.id;
+  // Single statement; CASCADE handles every child table. PRAGMA
+  // foreign_keys is ON per db.js initialisation.
+  db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+  res.json({ success: true });
+});
+
 // Available preset metadata for the wizard UI.
 router.get('/onboarding/presets', authenticate, (req, res) => {
   // Strip the default_fields from the response for Deploy 1 (not used yet).

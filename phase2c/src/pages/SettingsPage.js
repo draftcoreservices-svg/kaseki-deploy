@@ -6,7 +6,7 @@ import IconPicker from '../components/IconPicker';
 import ColorPicker from '../components/ColorPicker';
 import CreateSpaceModal from './CreateSpaceModal';
 
-export default function SettingsPage({ onBack, onRestartOnboarding, onTourReplay, theme, onToggleTheme, user }) {
+export default function SettingsPage({ onBack, onRestartOnboarding, onTourReplay, onAccountDeleted, theme, onToggleTheme, user }) {
   const [spaces, setSpaces] = useState([]);
   const [archived, setArchived] = useState([]);
   const [prefs, setPrefs] = useState(null);
@@ -75,21 +75,25 @@ export default function SettingsPage({ onBack, onRestartOnboarding, onTourReplay
     }
   };
 
-  const handleWipeAllData = async () => {
-    if (dangerText !== 'DELETE EVERYTHING') return;
+  // Permanently delete the user's account and every piece of data they own.
+  // The backend DELETE /user/account cascades through every user-owned
+  // table via FK constraints, so we don't need to iterate spaces client-side
+  // any more. The old per-space loop was defensive programming for a world
+  // where we only wiped data and kept the account shell; now the user row
+  // itself is gone, everything follows automatically.
+  const handleDeleteAccount = async () => {
+    if (dangerText !== 'DELETE MY ACCOUNT') return;
     setBusy(true);
     try {
-      // Hard-delete every space (cascades to all their content).
-      for (const s of [...spaces, ...archived]) {
-        await api.hardDeleteSpace(s.id);
-      }
-      // Then flip onboarding flag off so wizard runs again.
-      await api.restartOnboarding();
-      onRestartOnboarding?.();
+      await api.deleteAccount();
+      // The user row no longer exists. The session token we used to call
+      // this endpoint is implicitly invalid now. Clear local state and
+      // return to the auth page.
+      onAccountDeleted?.();
     } catch (err) {
-      alert('Failed to wipe: ' + (err.message || 'unknown error'));
+      alert('Failed to delete account: ' + (err.message || 'unknown error'));
+      setBusy(false);
     }
-    setBusy(false);
   };
 
   return (
@@ -203,25 +207,25 @@ export default function SettingsPage({ onBack, onRestartOnboarding, onTourReplay
           </div>
           {!confirmDanger ? (
             <button type="button" className="btn btn-danger" onClick={() => setConfirmDanger(true)}>
-              Delete all my data
+              Delete my account
             </button>
           ) : (
             <div className="danger-confirm">
-              <p>This will permanently delete every space, task, todo, event, note, tag, saved view, and template. Your login account stays. This cannot be undone.</p>
-              <p>Type <strong>DELETE EVERYTHING</strong> below to confirm:</p>
+              <p>This will permanently delete your account and every piece of data you own — spaces, tasks, todos, events, notes, tags, saved views, templates, time entries, and preferences. Your login credentials will no longer work. If you want to come back, you'll need to register again from scratch. This cannot be undone.</p>
+              <p>Type <strong>DELETE MY ACCOUNT</strong> below to confirm:</p>
               <input
                 type="text"
                 className="form-input"
                 value={dangerText}
                 onChange={e => setDangerText(e.target.value)}
-                placeholder="DELETE EVERYTHING"
+                placeholder="DELETE MY ACCOUNT"
               />
               <div className="danger-actions">
                 <button type="button" className="btn btn-ghost" onClick={() => { setConfirmDanger(false); setDangerText(''); }} disabled={busy}>
                   Cancel
                 </button>
-                <button type="button" className="btn btn-danger" onClick={handleWipeAllData} disabled={dangerText !== 'DELETE EVERYTHING' || busy}>
-                  {busy ? 'Wiping…' : 'Yes, delete everything'}
+                <button type="button" className="btn btn-danger" onClick={handleDeleteAccount} disabled={dangerText !== 'DELETE MY ACCOUNT' || busy}>
+                  {busy ? 'Deleting…' : 'Yes, delete my account'}
                 </button>
               </div>
             </div>

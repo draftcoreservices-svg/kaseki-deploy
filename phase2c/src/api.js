@@ -37,6 +37,9 @@ const api = {
   me: () => request('/auth/me'),
   forgotPassword: (body) => request('/auth/forgot-password', { method: 'POST', body }),
   resetPassword: (body) => request('/auth/reset-password', { method: 'POST', body }),
+  // Permanently delete the current user and ALL their data. Cascades on
+  // the server. After this call, the held session token is invalid.
+  deleteAccount: () => request('/user/account', { method: 'DELETE' }),
 
   // ── Spaces ──────────────────────────────────────────────────────────────
   getSpaces: () => request('/spaces'),
