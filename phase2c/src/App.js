@@ -93,6 +93,10 @@ export default function App() {
 
   const handleRestartOnboarding = useCallback(() => {
     setOnboardingComplete(false);
+    // Backend restart-onboarding also resets tour_completed to 0, so mirror
+    // that in local state. This ensures TourAutoStart fires when the user
+    // finishes re-onboarding and lands back in a space.
+    setTourCompleted(0);
     setView('landing');
   }, []);
 
@@ -272,17 +276,29 @@ export default function App() {
 // TourAutoStart
 //
 // Small helper that lives inside TourProvider so it can call useTour().
-// Fires the onboarding tour once when the user lands in the dashboard OR
-// landing view for the first time post-onboarding and their tour_completed
-// flag is still 0. The 800ms delay lets the page settle so the spotlight
-// target (.dash-add-btn) is measurable when step 2 activates.
+// Fires the onboarding tour once when the user lands in Dashboard for
+// the first time post-onboarding and their tour_completed flag is 0.
+// The 800ms delay lets the page settle so the spotlight target
+// (.dash-add-btn) is measurable when step 2 activates.
 //
-// Runs at most once per App lifetime via startedRef. Persistence of the
-// completion flag happens inside TourContext itself on skip/finish.
+// startedRef guards against multiple fires within a single tour cycle,
+// but resets when tourCompleted transitions from 1 back to 0 — that
+// happens on Settings > Replay, or when the user wipes data and
+// re-onboards. Without this reset the tour wouldn't re-fire within the
+// same browser session, requiring a reload.
+//
+// Persistence of the completion flag happens inside TourContext itself
+// on skip/finish.
 // ─────────────────────────────────────────────────────────────────────────
 function TourAutoStart({ tourCompleted, view }) {
   const { start, tourActive } = useTour();
   const startedRef = useRef(false);
+
+  // When tourCompleted drops to 0 (replay, wipe+reonboard), the ref must
+  // be reset so the main effect can fire again.
+  useEffect(() => {
+    if (tourCompleted === 0) startedRef.current = false;
+  }, [tourCompleted]);
 
   useEffect(() => {
     if (startedRef.current) return;

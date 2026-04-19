@@ -318,9 +318,13 @@ router.post('/user/restart-onboarding', authenticate, (req, res) => {
   const db = getDb();
   const ex = db.prepare('SELECT user_id FROM user_preferences WHERE user_id = ?').get(req.user.id);
   if (ex) {
-    db.prepare('UPDATE user_preferences SET onboarding_complete = 0 WHERE user_id = ?').run(req.user.id);
+    // Reset both onboarding_complete and tour_completed. Mental model: the
+    // user is starting over. Starting over includes Kaseki's tour — if they
+    // nuked their data and re-onboarded, they probably want (or at least
+    // won't object to) seeing the tour again.
+    db.prepare('UPDATE user_preferences SET onboarding_complete = 0, tour_completed = 0 WHERE user_id = ?').run(req.user.id);
   } else {
-    db.prepare('INSERT INTO user_preferences (user_id, onboarding_complete) VALUES (?, 0)').run(req.user.id);
+    db.prepare('INSERT INTO user_preferences (user_id, onboarding_complete, tour_completed) VALUES (?, 0, 0)').run(req.user.id);
   }
   res.json({ success: true });
 });
