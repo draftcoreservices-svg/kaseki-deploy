@@ -49,6 +49,7 @@ pct exec $CT -- bash -c "
   mkdir -p /opt/kaseki/backups/phase2c-pre
   cp /opt/kaseki/src/server/db.js                          /opt/kaseki/backups/phase2c-pre/db.js                2>/dev/null || true
   cp /opt/kaseki/src/server/routes.js                      /opt/kaseki/backups/phase2c-pre/routes.js            2>/dev/null || true
+  cp /opt/kaseki/src/server/auth.js                        /opt/kaseki/backups/phase2c-pre/auth.js              2>/dev/null || true
   cp /opt/kaseki/src/client-src/src/App.js                 /opt/kaseki/backups/phase2c-pre/App.js               2>/dev/null || true
   cp /opt/kaseki/src/client-src/src/api.js                 /opt/kaseki/backups/phase2c-pre/api.js               2>/dev/null || true
   cp /opt/kaseki/src/client-src/src/index.css              /opt/kaseki/backups/phase2c-pre/index.css            2>/dev/null || true
@@ -61,6 +62,7 @@ echo ""
 echo "[3/8] Pushing backend files…"
 pct push $CT "$WORK/phase2c/server/db.js"                   /opt/kaseki/src/server/db.js
 pct push $CT "$WORK/phase2c/server/routes.js"               /opt/kaseki/src/server/routes.js
+pct push $CT "$WORK/phase2c/server/auth.js"                 /opt/kaseki/src/server/auth.js
 pct push $CT "$WORK/phase2c/server/onboarding-presets.js"   /opt/kaseki/src/server/onboarding-presets.js
 echo "  done"
 
