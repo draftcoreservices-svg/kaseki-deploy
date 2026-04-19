@@ -287,7 +287,11 @@ function TourAutoStart({ tourCompleted, view }) {
   useEffect(() => {
     if (startedRef.current) return;
     if (tourCompleted !== 0) return;              // not loaded yet or already done
-    if (view !== 'dashboard' && view !== 'landing') return;
+    // The tour walks the user through space-specific features (task list,
+    // detail panel, timer etc). None of those elements exist on the
+    // landing page, so only auto-start once the user is inside a space.
+    // Step 2 spotlights .dash-add-btn which only renders in Dashboard.
+    if (view !== 'dashboard') return;
     if (tourActive) return;
     startedRef.current = true;
     const t = setTimeout(() => { start(TOUR_SCRIPT); }, 800);
