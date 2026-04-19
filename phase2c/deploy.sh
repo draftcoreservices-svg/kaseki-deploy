@@ -134,6 +134,11 @@ pct push $CT "$WORK/phase2c/src/components/MarkdownEditor.js"    /opt/kaseki/src
 # ── Phase H additions (the Orb — Kaseki the character) ───
 pct push $CT "$WORK/phase2c/src/components/Orb.js"               /opt/kaseki/src/client-src/src/components/Orb.js
 
+# ── Phase H Stage 2 additions (onboarding tour) ───
+pct push $CT "$WORK/phase2c/src/components/TourContext.js"       /opt/kaseki/src/client-src/src/components/TourContext.js
+pct push $CT "$WORK/phase2c/src/components/TourOverlay.js"       /opt/kaseki/src/client-src/src/components/TourOverlay.js
+pct push $CT "$WORK/phase2c/src/tour-script.js"                  /opt/kaseki/src/client-src/src/tour-script.js
+
 # ── 5. Append CSS ─────────────────────────────────────────────────────
 echo ""
 echo "[5/8] Appending Phase 2C CSS to index.css…"

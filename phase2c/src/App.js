@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from './api';
 import AuthPage from './pages/AuthPage';
 import OnboardingWizard from './pages/OnboardingWizard';
@@ -11,6 +11,9 @@ import QuickCapture from './components/QuickCapture';
 import ShortcutHelp from './components/ShortcutHelp';
 import { ToastProvider } from './components/ToastContext';
 import { EventProvider } from './components/EventContext';
+import { TourProvider, useTour } from './components/TourContext';
+import TourOverlay from './components/TourOverlay';
+import TOUR_SCRIPT from './tour-script';
 import Orb from './components/Orb';
 
 export default function App() {
@@ -25,6 +28,10 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // Phase H Stage 2 — tour completion flag loaded from preferences at startup.
+  // null = not yet known; 0/1 = loaded. Prevents the tour from firing before
+  // we know the user's actual status.
+  const [tourCompleted, setTourCompleted] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,6 +43,7 @@ export default function App() {
         const pref = await api.getPreferences().catch(() => ({ preferences: null }));
         if (cancelled) return;
         if (pref.preferences?.theme) setTheme(pref.preferences.theme);
+        setTourCompleted(pref.preferences?.tour_completed ? 1 : 0);
         const status = await api.getOnboardingStatus().catch(() => ({ complete: false }));
         if (cancelled) return;
         setOnboardingComplete(!!status.complete);
@@ -193,7 +201,9 @@ export default function App() {
 
   return (
     <EventProvider>
+    <TourProvider>
     <ToastProvider>
+      <TourAutoStart tourCompleted={tourCompleted} view={view} />
       {view === 'settings' && (
         <SettingsPage
           user={user}
@@ -201,6 +211,7 @@ export default function App() {
           onToggleTheme={toggleTheme}
           onBack={backToLanding}
           onRestartOnboarding={handleRestartOnboarding}
+          onTourReplay={() => { setTourCompleted(0); }}
         />
       )}
       {view === 'pomodoro' && (
@@ -250,7 +261,38 @@ export default function App() {
       />
       <ShortcutHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
       <Orb spaceColor={activeSpace?.color} />
+      <TourOverlay />
     </ToastProvider>
+    </TourProvider>
     </EventProvider>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// TourAutoStart
+//
+// Small helper that lives inside TourProvider so it can call useTour().
+// Fires the onboarding tour once when the user lands in the dashboard OR
+// landing view for the first time post-onboarding and their tour_completed
+// flag is still 0. The 800ms delay lets the page settle so the spotlight
+// target (.dash-add-btn) is measurable when step 2 activates.
+//
+// Runs at most once per App lifetime via startedRef. Persistence of the
+// completion flag happens inside TourContext itself on skip/finish.
+// ─────────────────────────────────────────────────────────────────────────
+function TourAutoStart({ tourCompleted, view }) {
+  const { start, tourActive } = useTour();
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    if (tourCompleted !== 0) return;              // not loaded yet or already done
+    if (view !== 'dashboard' && view !== 'landing') return;
+    if (tourActive) return;
+    startedRef.current = true;
+    const t = setTimeout(() => { start(TOUR_SCRIPT); }, 800);
+    return () => clearTimeout(t);
+  }, [tourCompleted, view, tourActive, start]);
+
+  return null;
 }

@@ -1062,6 +1062,7 @@ router.get('/preferences', authenticate, (req, res) => {
       onboarding_complete: 0,
       quick_capture_space_id: null,
       last_active_space_id: null,
+      tour_completed: 0,
     },
   });
 });
@@ -1072,6 +1073,10 @@ router.put('/preferences', authenticate, (req, res) => {
     'theme', 'pomodoro_work_mins', 'pomodoro_break_mins', 'pomodoro_long_break_mins',
     'pomodoro_sessions_until_long_break', 'default_view', 'keyboard_shortcuts_enabled',
     'quick_capture_space_id', 'last_active_space_id',
+    // Phase H Stage 2 — tour_completed is writable so the frontend can mark
+    // completion/skip, and the Settings page can reset it (write 0) to
+    // re-trigger the tour.
+    'tour_completed',
   ];
 
   // Validate space-ref fields: must belong to the user, or be null.

@@ -453,6 +453,11 @@ function initUserPreferences() {
   ensureColumn('user_preferences', 'onboarding_complete', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('user_preferences', 'quick_capture_space_id', 'INTEGER');
   ensureColumn('user_preferences', 'last_active_space_id', 'INTEGER');
+  // Phase H Stage 2 — Kaseki's onboarding tour completion. Separate from
+  // onboarding_complete because the wizard (data collection) and the tour
+  // (concept explanation) are different milestones. A user can have
+  // onboarding_complete=1 and tour_completed=0 (e.g. pre-existing users).
+  ensureColumn('user_preferences', 'tour_completed', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 // ───────────────────────────────────────────────────────────────────────────

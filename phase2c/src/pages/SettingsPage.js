@@ -6,7 +6,7 @@ import IconPicker from '../components/IconPicker';
 import ColorPicker from '../components/ColorPicker';
 import CreateSpaceModal from './CreateSpaceModal';
 
-export default function SettingsPage({ onBack, onRestartOnboarding, theme, onToggleTheme, user }) {
+export default function SettingsPage({ onBack, onRestartOnboarding, onTourReplay, theme, onToggleTheme, user }) {
   const [spaces, setSpaces] = useState([]);
   const [archived, setArchived] = useState([]);
   const [prefs, setPrefs] = useState(null);
@@ -58,6 +58,21 @@ export default function SettingsPage({ onBack, onRestartOnboarding, theme, onTog
     if (!window.confirm('Re-run the onboarding wizard? Your existing spaces will be preserved. You can review and add more.')) return;
     await api.restartOnboarding();
     onRestartOnboarding?.();
+  };
+
+  // Phase H Stage 2 — replay Kaseki's tour. Clears the persisted completion
+  // flag then triggers the parent's onTourReplay, which flips local state
+  // so TourAutoStart fires again on next dashboard/landing entry. Back-nav
+  // to landing happens automatically via onBack() — the tour auto-start
+  // logic will then pick it up.
+  const handleReplayTour = async () => {
+    try {
+      await api.savePreferences({ tour_completed: 0 });
+      onTourReplay?.();
+      onBack?.();
+    } catch (err) {
+      alert('Failed to reset tour: ' + (err.message || 'unknown error'));
+    }
   };
 
   const handleWipeAllData = async () => {
@@ -171,6 +186,12 @@ export default function SettingsPage({ onBack, onRestartOnboarding, theme, onTog
             <span>Walk through the setup wizard again</span>
             <button type="button" className="btn btn-ghost" onClick={handleRestartOnboarding}>
               <RefreshCw size={14} /> Re-run onboarding
+            </button>
+          </div>
+          <div className="settings-row">
+            <span>Take Kaseki's tour again</span>
+            <button type="button" className="btn btn-ghost" onClick={handleReplayTour}>
+              <RefreshCw size={14} /> Replay tour
             </button>
           </div>
         </section>

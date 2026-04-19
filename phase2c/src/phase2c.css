@@ -3584,3 +3584,179 @@ select option:hover {
     animation-duration: 0.4s !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Phase H Stage 2 — Onboarding tour (Kaseki's speech bubbles + spotlight)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Root: the overlay sits above normal content but below the Orb so
+      Kaseki is still draggable during tour. z-index hierarchy:
+      backdrop/spotlight = 8800, bubble = 8850, Orb = 9000. */
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 8800;
+  pointer-events: none;
+}
+
+.tour-backdrop {
+  position: fixed;
+  inset: 0;
+  /* SVG mask handles the visual darkening and cutout; the element itself
+     needs to accept pointer events on the dark area (to block clicks) but
+     allow them through the cutout. We use SVG mask with shape-rendering
+     and set pointer-events: auto so the dark parts block. Cutouts aren't
+     a native pointer-events concept, so we actually do NOT block clicks
+     on the dark area either — instead we rely on the bubble and
+     spotlighted content to be interactive, and the rest being visually
+     dimmed. This keeps the tour from feeling "trapped". */
+  pointer-events: none;
+}
+
+/* Glowing ring around the spotlight cutout. */
+.tour-spotlight {
+  position: fixed;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 2px rgba(255, 180, 60, 0.7),
+    0 0 24px 6px rgba(255, 170, 50, 0.45),
+    0 0 60px 12px rgba(255, 160, 40, 0.22);
+  animation: tourSpotlightPulse 2.2s ease-in-out infinite;
+}
+@keyframes tourSpotlightPulse {
+  0%, 100% { box-shadow:
+    0 0 0 2px rgba(255, 180, 60, 0.7),
+    0 0 24px 6px rgba(255, 170, 50, 0.45),
+    0 0 60px 12px rgba(255, 160, 40, 0.22); }
+  50%      { box-shadow:
+    0 0 0 2px rgba(255, 200, 90, 0.95),
+    0 0 28px 8px rgba(255, 180, 60, 0.6),
+    0 0 72px 16px rgba(255, 170, 50, 0.35); }
+}
+
+/* ── Speech bubble ──────────────────────────────────────────────── */
+.tour-bubble {
+  position: fixed;
+  width: 340px;
+  z-index: 8850;
+  pointer-events: auto;
+  background: linear-gradient(160deg, #1a2131 0%, #131823 100%);
+  border: 1px solid rgba(255, 180, 60, 0.35);
+  border-radius: 12px;
+  box-shadow:
+    0 20px 50px -10px rgba(0,0,0,0.6),
+    0 0 0 1px rgba(0,0,0,0.4),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  padding: 14px 16px 12px;
+  color: var(--text-primary, #e6e8ec);
+  font-size: 13px;
+  line-height: 1.55;
+  animation: tourBubbleIn 0.35s cubic-bezier(.2,.8,.3,1);
+}
+@keyframes tourBubbleIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.tour-bubble-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.tour-bubble-name {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 180, 60, 0.9);
+}
+.tour-bubble-progress {
+  font-size: 11px;
+  color: var(--text-tertiary, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+.tour-bubble-body {
+  margin-bottom: 12px;
+}
+.tour-bubble-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tour-bubble-skip {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary, #6b7280);
+  font-size: 11px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.1s, background 0.1s;
+}
+.tour-bubble-skip:hover {
+  color: var(--text-secondary, #9ca3af);
+  background: rgba(255,255,255,0.04);
+}
+.tour-bubble-next {
+  background: linear-gradient(180deg, #ff9a3c 0%, #e88120 100%);
+  border: none;
+  color: #1a1308;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px -1px rgba(232, 129, 32, 0.5);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.tour-bubble-next:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px -2px rgba(232, 129, 32, 0.65);
+}
+.tour-bubble-waiting {
+  font-size: 11px;
+  color: rgba(255, 180, 60, 0.8);
+  font-style: italic;
+  animation: tourWaitingPulse 1.8s ease-in-out infinite;
+}
+@keyframes tourWaitingPulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+
+/* Tail pointers — small triangle pointing at the spotlight. One variant
+   per placement; only visible when placement !== 'center'. */
+.tour-bubble::before {
+  content: '';
+  position: absolute;
+  width: 0;
+  height: 0;
+  border: 8px solid transparent;
+}
+.tour-bubble--top::before {
+  bottom: -16px;
+  left: 50%;
+  margin-left: -8px;
+  border-top-color: rgba(255, 180, 60, 0.35);
+}
+.tour-bubble--bottom::before {
+  top: -16px;
+  left: 50%;
+  margin-left: -8px;
+  border-bottom-color: rgba(255, 180, 60, 0.35);
+}
+.tour-bubble--left::before {
+  right: -16px;
+  top: 50%;
+  margin-top: -8px;
+  border-left-color: rgba(255, 180, 60, 0.35);
+}
+.tour-bubble--right::before {
+  left: -16px;
+  top: 50%;
+  margin-top: -8px;
+  border-right-color: rgba(255, 180, 60, 0.35);
+}
+.tour-bubble--center::before { display: none; }
