@@ -34,11 +34,14 @@ const TOUR_SCRIPT = [
   },
   {
     id: 'task-list',
-    // Spotlights the "+ New" button in the task sidebar. If the button can't
-    // be found (e.g. user is on landing page), the tour gracefully shows the
-    // bubble centred with no spotlight.
+    // Spotlights the "+ New" button specifically. The class on the button
+    // was originally just .dash-add-btn, but that selector also matches the
+    // archive/active toggle (first in DOM order), which led to the tour
+    // spotlighting the wrong button and getting stuck in a loop when the
+    // user clicked the archive toggle instead. Targeting the more specific
+    // .dash-add-btn--new modifier fixes it.
     speech: "This is your task list. Try clicking '+ New' to add something — I'll wait.",
-    spotlightSelector: '.dash-add-btn',
+    spotlightSelector: '.dash-add-btn--new',
     anchor: 'right',
     advance: { event: 'task_created' },
   },

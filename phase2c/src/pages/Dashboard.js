@@ -1547,7 +1547,7 @@ export default function Dashboard({ space, onBack, theme, onToggleTheme, pending
               <span className="dash-sidebar-title">{showArch?'Archived':'Tasks'}</span>
               <div style={{display:'flex',gap:4}}>
                 <button className="dash-add-btn" onClick={()=>setShowArch(!showArch)}>{showArch?'Active':'🗂️'}</button>
-                {!showArch&&<button className="dash-add-btn" onClick={()=>setTemplatePickerOpen(true)}>+ New</button>}
+                {!showArch&&<button className="dash-add-btn dash-add-btn--new" onClick={()=>setTemplatePickerOpen(true)}>+ New</button>}
               </div>
             </div>
             <div className="dash-sidebar-filters">
