@@ -74,6 +74,21 @@ export default function App() {
     } catch {
       setOnboardingComplete(false);
     }
+    // Refetch preferences for the now-authenticated user. Without this,
+    // tourCompleted (and theme, and anything else preference-derived) keeps
+    // the stale value from the previous mount — which produces a real bug
+    // after account deletion + re-register: the new user's tour_completed
+    // is 0 in the DB but local state still holds 1 from the deleted user's
+    // last state, so TourAutoStart skips. Same issue would bite if the
+    // user logged out and logged in as someone else, though that's rarer.
+    try {
+      const pref = await api.getPreferences();
+      if (pref.preferences?.theme) setTheme(pref.preferences.theme);
+      setTourCompleted(pref.preferences?.tour_completed ? 1 : 0);
+    } catch {
+      // New account with no prefs row yet — default to "needs tour".
+      setTourCompleted(0);
+    }
     setView('landing');
     setActiveSpace(null);
   }, []);
